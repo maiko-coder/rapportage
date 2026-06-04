@@ -17,9 +17,14 @@ let currentNoteKey  = null;   // "clientId|YYYY-MM"
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
 function showPage(name, btn) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => {
+    p.classList.remove('active');
+    p.classList.add('hidden');
+  });
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
+  const page = document.getElementById('page-' + name);
+  page.classList.remove('hidden');
+  page.classList.add('active');
   if (btn) btn.classList.add('active');
   // Chart.js renders with 0px when the canvas is hidden — resize after reveal
   requestAnimationFrame(() => {
