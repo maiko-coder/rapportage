@@ -1,10 +1,10 @@
-require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
+const API_KEY = 'x8mgquMubZtKRsmOQyaW';
 const API_BASE = 'https://api.reportingninja.com/v1';
 
 app.use(express.json());
@@ -12,7 +12,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 function getHeaders() {
   return {
-    'Authorization': `Bearer ${process.env.REPORTING_NINJA_API_KEY}`,
+    'Authorization': `Bearer ${API_KEY}`,
     'Content-Type': 'application/json',
   };
 }
