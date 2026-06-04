@@ -12,6 +12,7 @@ let currentNoteKey  = null;   // "clientId|YYYY-MM"
     o.textContent = c.name;
     sel.appendChild(o);
   });
+  sel.addEventListener('change', () => { if (sel.value) loadReport(); });
 })();
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
@@ -140,6 +141,9 @@ async function loadMeta(client, dateRange) {
     integration_id: 'facebook_ads',
     connection_key: client.meta.connection_key,
     account_id: client.meta.account_id,
+    settings: {
+      attribution_window: 'ATTRIBUTION_MODEL_VIEW_CLICK###VIEW_ATTRIBUTION_WINDOW_1D###CLICK_ATTRIBUTION_WINDOW_7D',
+    },
     fields: ['day', 'campaign_name', 'impressions', 'clicks', 'spend', 'cpc'],
     date_range: dateRange,
     limit: 500,
