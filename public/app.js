@@ -21,6 +21,10 @@ function showPage(name, btn) {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   if (btn) btn.classList.add('active');
+  // Chart.js renders with 0px when the canvas is hidden — resize after reveal
+  requestAnimationFrame(() => {
+    Object.values(charts).forEach(c => c.resize());
+  });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
