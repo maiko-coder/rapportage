@@ -609,15 +609,18 @@ async function loadReport() {
     const periodLabel = { lastmonth:'Vorige maand', thismonth:'Deze maand', last7days:'Laatste 7 dagen', last30days:'Laatste 30 dagen', last90days:'Laatste 90 dagen' }[period] || period;
     document.getElementById('kpi-sub').textContent = `Geselecteerde periode: ${periodLabel} · alle platformen`;
 
+    document.getElementById('kpi-heading').textContent = 'Samenvatting — ' + client.name;
+    document.getElementById('kpi-sub').textContent = 'Geselecteerde periode: ' + periodLabel + ' · alle gekoppelde platformen';
+
     const kpiGrid = document.getElementById('kpi-grid');
     kpiGrid.innerHTML = [
-      { label: 'Totaal uitgaven',  value: fmt(totalSpend, 'eur'),  sub: 'Alle platformen' },
-      { label: 'Totaal clicks',    value: fmt(totalClicks),         sub: 'Alle platformen' },
-      { label: 'Totaal impressies',value: fmt(totalImpr),           sub: 'Alle platformen' },
-      { label: 'Gemiddelde CPC',   value: totalClicks > 0 ? fmt(avgCPC, 'eur2') : '—', sub: 'Kosten per klik' },
-      { label: 'Meta uitgaven',    value: fmt(metaRows.reduce((s,r)=>s+parseFloat(r.spend||0),0), 'eur'),  sub: 'Meta Ads' },
-      { label: 'Google kosten',    value: fmt(googleRows.reduce((s,r)=>s+micros(r['metrics.cost_micros']),0), 'eur'), sub: 'Google Ads' },
-      { label: 'Pinterest uitg.',  value: fmt(pintRows.reduce((s,r)=>s+parseFloat(r.SPEND_IN_DOLLAR||0),0), 'eur'), sub: 'Pinterest Ads' },
+      { label: 'Totaal uitgaven',   value: fmt(totalSpend, 'eur'),  sub: 'Alle platformen' },
+      { label: 'Totaal clicks',     value: fmt(totalClicks),         sub: 'Alle platformen' },
+      { label: 'Totaal impressies', value: fmt(totalImpr),           sub: 'Alle platformen' },
+      { label: 'Gem. CPC',          value: totalClicks > 0 ? fmt(avgCPC, 'eur2') : '—', sub: 'Kosten per klik' },
+      { label: 'Meta uitgaven',     value: fmt(metaRows.reduce((s,r)=>s+parseFloat(r.spend||0),0), 'eur'),  sub: 'Meta Ads' },
+      { label: 'Google kosten',     value: fmt(googleRows.reduce((s,r)=>s+micros(r['metrics.cost_micros']),0), 'eur'), sub: 'Google Ads' },
+      { label: 'Pinterest uitg.',   value: fmt(pintRows.reduce((s,r)=>s+parseFloat(r.SPEND_IN_DOLLAR||0),0), 'eur'), sub: 'Pinterest Ads' },
     ].map(k => `
       <div class="kpi-card">
         <div class="kpi-label">${k.label}</div>
