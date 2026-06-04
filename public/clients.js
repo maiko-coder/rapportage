@@ -18,7 +18,7 @@ const CLIENTS = [
     },
     google: {
       connection_key: 'mcc@woeler.nl',
-      account_id: '1104131676',
+      account_id: '2810577686',
       data_view: 'campaign',
     },
     pinterest: {
