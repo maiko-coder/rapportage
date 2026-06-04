@@ -42,7 +42,7 @@ function fmt(n, type) {
   return new Intl.NumberFormat('nl-NL').format(Math.round(v));
 }
 
-function micros(v) { return v != null ? parseFloat(v) / 1e6 : 0; }
+function micros(v) { return v != null ? parseFloat(v) : 0; }
 
 function monthKey(dateStr) {
   // dateStr: YYYY-MM-DD (Meta/Pinterest) or YYYY-MM-DD (Google segments.date)
