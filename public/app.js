@@ -609,8 +609,10 @@ async function loadReport() {
     const periodLabel = { lastmonth:'Vorige maand', thismonth:'Deze maand', last7days:'Laatste 7 dagen', last30days:'Laatste 30 dagen', last90days:'Laatste 90 dagen' }[period] || period;
     document.getElementById('kpi-sub').textContent = `Geselecteerde periode: ${periodLabel} · alle platformen`;
 
-    document.getElementById('kpi-heading').textContent = 'Samenvatting — ' + client.name;
-    document.getElementById('kpi-sub').textContent = 'Geselecteerde periode: ' + periodLabel + ' · alle gekoppelde platformen';
+    const headingEl = document.getElementById('kpi-heading');
+    const subEl = document.getElementById('kpi-sub');
+    if (headingEl) headingEl.textContent = 'Samenvatting — ' + client.name;
+    if (subEl) subEl.textContent = 'Geselecteerde periode: ' + periodLabel + ' · alle gekoppelde platformen';
 
     const kpiGrid = document.getElementById('kpi-grid');
     kpiGrid.innerHTML = [
