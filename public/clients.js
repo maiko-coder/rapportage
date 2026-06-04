@@ -1,34 +1,56 @@
 /**
- * Klantconfiguratie
+ * Klantconfiguratie — automatisch gegenereerd op basis van live API-data
  *
- * Voeg hier je klanten toe. Elke klant heeft:
- *   - id:   unieke slug
- *   - name: weergavenaam
- *   - meta:      { connection_key, account_id }  (of null als niet van toepassing)
- *   - google:    { connection_key, account_id, data_view: "campaign" }
- *   - pinterest: { connection_key, account_id }
+ * Meta connection keys:
+ *   - mara_daniek_84@hotmail.com  [active]  ← gebruik altijd deze
+ *   - maikogroot@hotmail.com      [inactive]
  *
- * connection_key en account_id haal je op via /api/connections (zie server.js).
- * Start de server en open http://localhost:3000/api/connections in Postman/Bruno
- * met body { "integration_id": "facebook_ads" } om de waarden te zien.
+ * Google connection key:  mcc@woeler.nl  [active]
+ * Pinterest connection key: Woeleronlinemarketing  [active]
  */
 const CLIENTS = [
   {
-    id: 'voorbeeld',
-    name: 'Voorbeeldklant',
+    id: 'trapleuningfabriek',
+    name: 'Trapleuningfabriek',
     meta: {
-      connection_key: 'jouw@email.nl',
-      account_id: '1234567890',
+      connection_key: 'mara_daniek_84@hotmail.com',
+      account_id: '262668156654320',
     },
     google: {
-      connection_key: 'jouw@email.nl',
-      account_id: '1234567890',
+      connection_key: 'mcc@woeler.nl',
+      account_id: '1104131676',
       data_view: 'campaign',
     },
     pinterest: {
-      connection_key: 'jouw@email.nl',
-      account_id: '1234567890',
+      connection_key: 'Woeleronlinemarketing',
+      account_id: '549768896139',
+      data_view: 'campaign',
     },
   },
-  // Voeg hier meer klanten toe...
+  {
+    id: 'rietveld',
+    name: 'Rietveld',
+    meta: null,
+    google: {
+      connection_key: 'mcc@woeler.nl',
+      account_id: '3433116645',
+      data_view: 'campaign',
+    },
+    pinterest: {
+      connection_key: 'Woeleronlinemarketing',
+      account_id: '549760421679',
+      data_view: 'campaign',
+    },
+  },
+  {
+    id: 'zeevanverf',
+    name: 'Zeevanverf',
+    meta: null,
+    google: null,
+    pinterest: {
+      connection_key: 'Woeleronlinemarketing',
+      account_id: '549769281451',
+      data_view: 'campaign',
+    },
+  },
 ];

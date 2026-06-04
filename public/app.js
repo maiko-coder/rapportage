@@ -167,7 +167,9 @@ async function loadPinterest(client, dateRange) {
     integration_id: 'pinterest_ads',
     connection_key: client.pinterest.connection_key,
     account_id: client.pinterest.account_id,
-    fields: ['DATE', 'CAMPAIGN_NAME', 'IMPRESSION', 'OUTBOUND_CLICK', 'SPEND_IN_DOLLAR', 'CPC_IN_DOLLAR'],
+    data_view: client.pinterest.data_view || 'campaign',
+    settings: { click_window: '30', view_window: '1', engagement_window: '30', conversion_report_time: 'TIME_OF_AD_ACTION' },
+    fields: ['DAY', 'CAMPAIGN_NAME', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR', 'ECPC_IN_DOLLAR'],
     date_range: dateRange,
     limit: 500,
   });
@@ -307,17 +309,17 @@ function renderPinterest(rows) {
 
   const byDay = {};
   rows.forEach(r => {
-    const d = r.DATE || '';
+    const d = r.DAY || '';
     if (!byDay[d]) byDay[d] = { spend: 0, clicks: 0, impressions: 0 };
     byDay[d].spend += parseFloat(r.SPEND_IN_DOLLAR || 0);
-    byDay[d].clicks += parseFloat(r.OUTBOUND_CLICK || 0);
-    byDay[d].impressions += parseFloat(r.IMPRESSION || 0);
+    byDay[d].clicks += parseFloat(r.OUTBOUND_CLICK_1 || 0);
+    byDay[d].impressions += parseFloat(r.IMPRESSION_1 || 0);
   });
   const days = Object.keys(byDay).sort();
 
   const totSpend  = rows.reduce((s, r) => s + parseFloat(r.SPEND_IN_DOLLAR || 0), 0);
-  const totClicks = rows.reduce((s, r) => s + parseFloat(r.OUTBOUND_CLICK || 0), 0);
-  const totImpr   = rows.reduce((s, r) => s + parseFloat(r.IMPRESSION || 0), 0);
+  const totClicks = rows.reduce((s, r) => s + parseFloat(r.OUTBOUND_CLICK_1 || 0), 0);
+  const totImpr   = rows.reduce((s, r) => s + parseFloat(r.IMPRESSION_1 || 0), 0);
   const avgCPC    = totClicks > 0 ? totSpend / totClicks : 0;
   const avgCTR    = totImpr > 0 ? totClicks / totImpr * 100 : 0;
 
@@ -340,8 +342,8 @@ function renderPinterest(rows) {
   rows.forEach(r => {
     const n = r.CAMPAIGN_NAME || '(onbekend)';
     if (!byCamp[n]) byCamp[n] = { impressions: 0, clicks: 0, spend: 0 };
-    byCamp[n].impressions += parseFloat(r.IMPRESSION || 0);
-    byCamp[n].clicks += parseFloat(r.OUTBOUND_CLICK || 0);
+    byCamp[n].impressions += parseFloat(r.IMPRESSION_1 || 0);
+    byCamp[n].clicks += parseFloat(r.OUTBOUND_CLICK_1 || 0);
     byCamp[n].spend += parseFloat(r.SPEND_IN_DOLLAR || 0);
   });
   const campRows = Object.entries(byCamp)
@@ -375,14 +377,14 @@ function renderSummaryCharts(metaRows, googleRows, pintRows) {
   const googleByDay = {};
   googleRows.forEach(r => { const d = r['segments.date'] || ''; googleByDay[d] = (googleByDay[d] || 0) + micros(r['metrics.cost_micros']); });
   const pintByDay = {};
-  pintRows.forEach(r => { const d = r.DATE || ''; pintByDay[d] = (pintByDay[d] || 0) + parseFloat(r.SPEND_IN_DOLLAR || 0); });
+  pintRows.forEach(r => { const d = r.DAY || ''; pintByDay[d] = (pintByDay[d] || 0) + parseFloat(r.SPEND_IN_DOLLAR || 0); });
 
   const metaClicksByDay = {};
   metaRows.forEach(r => { const d = r.day || ''; metaClicksByDay[d] = (metaClicksByDay[d] || 0) + parseFloat(r.clicks || 0); });
   const googleClicksByDay = {};
   googleRows.forEach(r => { const d = r['segments.date'] || ''; googleClicksByDay[d] = (googleClicksByDay[d] || 0) + parseFloat(r['metrics.clicks'] || 0); });
   const pintClicksByDay = {};
-  pintRows.forEach(r => { const d = r.DATE || ''; pintClicksByDay[d] = (pintClicksByDay[d] || 0) + parseFloat(r.OUTBOUND_CLICK || 0); });
+  pintRows.forEach(r => { const d = r.DAY || ''; pintClicksByDay[d] = (pintClicksByDay[d] || 0) + parseFloat(r.OUTBOUND_CLICK_1 || 0); });
 
   show('summary-charts');
 
@@ -422,11 +424,11 @@ function buildYearlyTable(metaRows, googleRows, pintRows) {
     months[mk].clicks += parseFloat(r['metrics.clicks'] || 0);
   });
   pintRows.forEach(r => {
-    const mk = monthKey(r.DATE);
+    const mk = monthKey(r.DAY);
     if (!mk) return;
     ensureMonth(mk);
     months[mk].pinterest += parseFloat(r.SPEND_IN_DOLLAR || 0);
-    months[mk].clicks += parseFloat(r.OUTBOUND_CLICK || 0);
+    months[mk].clicks += parseFloat(r.OUTBOUND_CLICK_1 || 0);
   });
 
   return Object.entries(months)
@@ -585,10 +587,10 @@ async function loadReport() {
                       + pintRows.reduce((s, r) => s + parseFloat(r.SPEND_IN_DOLLAR || 0), 0);
     const totalClicks = metaRows.reduce((s, r) => s + parseFloat(r.clicks || 0), 0)
                       + googleRows.reduce((s, r) => s + parseFloat(r['metrics.clicks'] || 0), 0)
-                      + pintRows.reduce((s, r) => s + parseFloat(r.OUTBOUND_CLICK || 0), 0);
+                      + pintRows.reduce((s, r) => s + parseFloat(r.OUTBOUND_CLICK_1 || 0), 0);
     const totalImpr   = metaRows.reduce((s, r) => s + parseFloat(r.impressions || 0), 0)
                       + googleRows.reduce((s, r) => s + parseFloat(r['metrics.impressions'] || 0), 0)
-                      + pintRows.reduce((s, r) => s + parseFloat(r.IMPRESSION || 0), 0);
+                      + pintRows.reduce((s, r) => s + parseFloat(r.IMPRESSION_1 || 0), 0);
     const avgCPC = totalClicks > 0 ? totalSpend / totalClicks : 0;
 
     const periodLabel = { lastmonth:'Vorige maand', thismonth:'Deze maand', last7days:'Laatste 7 dagen', last30days:'Laatste 30 dagen', last90days:'Laatste 90 dagen' }[period] || period;
