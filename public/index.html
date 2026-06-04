@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Marketing Rapportage</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="header-left">
+      <h1>Marketing Rapportage</h1>
+      <span id="period-label" class="period-badge"></span>
+    </div>
+    <div class="header-controls">
+      <div class="control-group">
+        <label>Klant</label>
+        <select id="client-select">
+          <option value="">— selecteer klant —</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label>Periode</label>
+        <select id="period-select">
+          <option value="lastmonth">Vorige maand</option>
+          <option value="thismonth">Deze maand</option>
+          <option value="last7days">Laatste 7 dagen</option>
+          <option value="last30days">Laatste 30 dagen</option>
+          <option value="last90days">Laatste 90 dagen</option>
+        </select>
+      </div>
+      <button id="load-btn" onclick="loadReport()">Laden</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div id="setup-notice" class="notice">
+    <strong>Hoe te starten:</strong> Maak een <code>.env</code> bestand aan op basis van <code>.env.example</code>,
+    vul je Reporting Ninja API-sleutel in, en configureer je klanten in <code>public/clients.js</code>.
+    Verbind vervolgens Meta, Google Ads en Pinterest in de
+    <a href="https://app.reportingninja.com" target="_blank">Reporting Ninja interface</a> via Data Sources.
+  </div>
+
+  <div id="error-banner" class="error-banner hidden"></div>
+
+  <div id="loading" class="loading hidden">
+    <div class="spinner"></div>
+    <p>Data ophalen...</p>
+  </div>
+
+  <!-- KPI Row -->
+  <section id="kpi-section" class="hidden">
+    <h2 class="section-title">Samenvatting</h2>
+    <div class="kpi-grid" id="kpi-grid"></div>
+  </section>
+
+  <!-- Meta Ads -->
+  <section id="meta-section" class="platform-section hidden">
+    <div class="platform-header">
+      <div class="platform-icon meta-icon">M</div>
+      <h2>Meta Ads</h2>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-title">Uitgaven per dag (€)</div>
+        <canvas id="meta-spend-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Clicks &amp; Impressies</div>
+        <canvas id="meta-engagement-chart"></canvas>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table id="meta-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Google Ads -->
+  <section id="google-section" class="platform-section hidden">
+    <div class="platform-header">
+      <div class="platform-icon google-icon">G</div>
+      <h2>Google Ads</h2>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-title">Kosten per dag</div>
+        <canvas id="google-spend-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Clicks &amp; Impressies</div>
+        <canvas id="google-engagement-chart"></canvas>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table id="google-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Pinterest Ads -->
+  <section id="pinterest-section" class="platform-section hidden">
+    <div class="platform-header">
+      <div class="platform-icon pinterest-icon">P</div>
+      <h2>Pinterest Ads</h2>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <div class="chart-title">Uitgaven per dag (€)</div>
+        <canvas id="pinterest-spend-chart"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Clicks &amp; Impressies</div>
+        <canvas id="pinterest-engagement-chart"></canvas>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table id="pinterest-table">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<script src="clients.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
