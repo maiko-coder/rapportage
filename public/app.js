@@ -252,6 +252,11 @@ function updateSidebarForClient(client, platformSettings) {
   }
 })();
 
+async function doLogout() {
+  await fetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
 // ─── Navigation ───────────────────────────────────────────────────────────────
 function showPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => { p.classList.remove('active'); p.classList.add('hidden'); });

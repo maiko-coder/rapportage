@@ -3,6 +3,9 @@ const fetch    = require('node-fetch');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
+const { Pool } = require('pg');
+const bcrypt   = require('bcryptjs');
+const session  = require('express-session');
 
 const app      = express();
 const PORT     = 3000;
@@ -10,9 +13,6 @@ const API_KEY  = 'x8mgquMubZtKRsmOQyaW';
 const API_BASE = 'https://api.reportingninja.com/v1';
 
 // ─── Settings store ───────────────────────────────────────────────────────────
-// On Vercel (serverless) the project dir is read-only → use /tmp.
-// /tmp is writable but ephemeral (resets on cold start), which is fine for this tool.
-// Locally, settings persist in ./data/settings.json.
 const IS_VERCEL     = !!process.env.VERCEL;
 const DATA_DIR      = IS_VERCEL ? '/tmp' : path.join(__dirname, 'data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
@@ -40,11 +40,79 @@ function hashPassword(pw) {
   return crypto.createHash('sha256').update(pw + ':woeler-rapportage').digest('hex');
 }
 
+// ─── Auth DB (read-only, shares Google Ads tool user table) ──────────────────
+const authDb = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 2,
+}) : null;
+
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(express.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'rapportage-dev-secret-change-in-prod',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax' },
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── Client view (shareable link) ────────────────────────────────────────────
+// ─── Auth middleware ──────────────────────────────────────────────────────────
+function requireAuth(req, res, next) {
+  if (!authDb) return next(); // no DB configured → open access (local dev)
+  if (req.session?.userId) return next();
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Niet ingelogd' });
+  res.redirect('/login');
+}
+
+// ─── Login page ───────────────────────────────────────────────────────────────
+app.get('/login', (req, res) => {
+  if (req.session?.userId) return res.redirect('/');
+  res.sendFile(path.join(__dirname, 'public/login.html'));
+});
+
+// ─── API: login ───────────────────────────────────────────────────────────────
+app.post('/api/login', async (req, res) => {
+  if (!authDb) return res.json({ ok: true }); // no DB → skip auth
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Vul e-mail en wachtwoord in.' });
+  try {
+    const result = await authDb.query(
+      'SELECT id, name, email, password, role, approved FROM "User" WHERE lower(email) = lower($1) LIMIT 1',
+      [email]
+    );
+    const user = result.rows[0];
+    if (!user || !user.password) return res.status(401).json({ error: 'Geen account gevonden.' });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ error: 'Onjuist wachtwoord.' });
+    if (!user.approved && user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Account nog niet goedgekeurd.' });
+    }
+    req.session.userId = user.id;
+    req.session.email  = user.email;
+    req.session.name   = user.name;
+    res.json({ ok: true, name: user.name });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Inloggen mislukt. Probeer opnieuw.' });
+  }
+});
+
+// ─── API: logout ─────────────────────────────────────────────────────────────
+app.post('/api/logout', (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
+});
+
+// ─── API: current session ─────────────────────────────────────────────────────
+app.get('/api/me', (req, res) => {
+  if (!authDb || req.session?.userId) {
+    res.json({ name: req.session?.name || 'Marketeer', email: req.session?.email || '' });
+  } else {
+    res.status(401).json({ error: 'Niet ingelogd' });
+  }
+});
+
+// ─── Client view (shareable link) — public, has its own password gate ─────────
 app.get('/r/:clientId', (req, res) => {
   const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
   try {
@@ -60,12 +128,17 @@ app.get('/r/:clientId', (req, res) => {
 });
 
 // ─── Settings page ────────────────────────────────────────────────────────────
-app.get('/settings', (req, res) => {
+app.get('/settings', requireAuth, (req, res) => {
   res.sendFile(path.join(__dirname, 'public/settings.html'));
 });
 
-// ─── API: get settings (passwords masked) ────────────────────────────────────
-app.get('/api/settings', (req, res) => {
+// ─── Main dashboard ───────────────────────────────────────────────────────────
+app.get('/', requireAuth, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/index.html'));
+});
+
+// ─── API: get settings (passwords masked) ─────────────────────────────────────
+app.get('/api/settings', requireAuth, (req, res) => {
   const settings = readSettings();
   const safe = { clients: {} };
   for (const [id, cfg] of Object.entries(settings.clients || {})) {
@@ -75,7 +148,7 @@ app.get('/api/settings', (req, res) => {
 });
 
 // ─── API: save settings ───────────────────────────────────────────────────────
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireAuth, (req, res) => {
   const incoming = req.body;
   const current  = readSettings();
 
@@ -83,13 +156,11 @@ app.post('/api/settings', (req, res) => {
     const existing = current.clients[id] || {};
     const entry    = { ...existing };
 
-    // Password: only hash & store if a real new value was sent
     if (cfg.password && cfg.password !== '••••••••') {
       entry.password = hashPassword(cfg.password);
     } else if (cfg.password === '') {
-      entry.password = '';   // explicit reset / remove password
+      entry.password = '';
     }
-    // (undefined / masked = keep existing)
 
     if (cfg.platforms        !== undefined) entry.platforms        = cfg.platforms;
     if (cfg.accountOverrides !== undefined) entry.accountOverrides = cfg.accountOverrides;
@@ -101,18 +172,18 @@ app.post('/api/settings', (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── API: authenticate a client link ─────────────────────────────────────────
+// ─── API: authenticate a client link (public) ─────────────────────────────────
 app.post('/api/auth/:clientId', (req, res) => {
   const { clientId }  = req.params;
   const { password }  = req.body;
   const settings      = readSettings();
   const cfg           = settings.clients[clientId];
 
-  if (!cfg?.password) return res.json({ valid: true }); // no password set
+  if (!cfg?.password) return res.json({ valid: true });
   res.json({ valid: hashPassword(password) === cfg.password });
 });
 
-// ─── API: client config (used by app.js on load) ─────────────────────────────
+// ─── API: client config (public — used by /r/:clientId pages) ─────────────────
 app.get('/api/client-config/:clientId', (req, res) => {
   const { clientId } = req.params;
   const cfg          = readSettings().clients[clientId] || {};
@@ -145,7 +216,7 @@ app.post('/api/query', async (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.get('/api/overview', async (req, res) => {
+app.get('/api/overview', requireAuth, async (req, res) => {
   try {
     const [meta, google, pinterestAds, pinterestOrganic] = await Promise.all([
       rnPost('/connections', { integration_id: 'facebook_ads' }),
