@@ -180,16 +180,8 @@ async function submitGate() {
 // ─── Client settings & sidebar ───────────────────────────────────────────────
 async function fetchClientConfig(clientId) {
   try {
-    const r   = await fetch(`/api/client-config/${clientId}`);
-    const cfg = await r.json();
-    // Merge with localStorage overrides (server /tmp is ephemeral on Vercel)
-    const local = (() => { try { return JSON.parse(localStorage.getItem('rapportage_settings') || 'null'); } catch { return null; } })();
-    const localClient = local?.clients?.[clientId];
-    if (localClient) {
-      if (localClient.platforms)        cfg.platforms        = localClient.platforms;
-      if (localClient.accountOverrides) cfg.accountOverrides = localClient.accountOverrides;
-    }
-    return cfg;
+    const r = await fetch(`/api/client-config/${clientId}`);
+    return await r.json();
   } catch { return null; }
 }
 
