@@ -21,10 +21,6 @@ const PERIODS = [
   { value: 'lastyear',    label: 'Vorig jaar' },
 ];
 
-const PERIOD_PRESETS = {
-  last7days: 'last7days', last30days: 'last30days',
-  thismonth: 'thismonth', lastmonth: 'lastmonth', thisyear: 'thisyear',
-};
 
 let selectedPeriod     = 'last30days';
 let customStartDate    = '';
@@ -59,9 +55,8 @@ function computePeriodDates(value) {
 function getPeriodApiDateRange(value) {
   if (value === undefined) value = selectedPeriod;
   if (value === 'custom') return { start_date: customStartDate, end_date: customEndDate };
-  if (PERIOD_PRESETS[value]) return { preset: PERIOD_PRESETS[value] };
   const d = computePeriodDates(value);
-  return d ? { start_date: d.start, end_date: d.end } : { preset: 'last30days' };
+  return d ? { start_date: d.start, end_date: d.end } : computePeriodDates('last30days');
 }
 
 function fmtDisplayDate(iso) {
@@ -569,7 +564,8 @@ async function loadReport(forcedClientId) {
   setLoading(true);
 
   const dateRange     = getPeriodApiDateRange();
-  const yearDateRange = { preset: 'thisyear' };
+  const yd            = computePeriodDates('thisyear');
+  const yearDateRange = yd ? { start_date: yd.start, end_date: yd.end } : dateRange;
 
   try {
     const [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear] = await Promise.allSettled([
