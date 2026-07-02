@@ -3,6 +3,220 @@ const charts = {};
 let currentClientId = null;
 let currentNoteKey  = null;   // "clientId|YYYY-MM"
 
+// ─── Period State ─────────────────────────────────────────────────────────────
+const PERIODS = [
+  { value: 'last7days',   label: 'Laatste 7 dagen' },
+  { value: 'last14days',  label: 'Laatste 14 dagen' },
+  { value: 'last30days',  label: 'Laatste 30 dagen' },
+  { value: 'last90days',  label: 'Laatste 90 dagen' },
+  { value: 'thismonth',   label: 'Deze maand' },
+  { value: 'lastmonth',   label: 'Vorige maand' },
+  { value: 'thisquarter', label: 'Dit kwartaal' },
+  { value: 'lastquarter', label: 'Vorig kwartaal' },
+  { value: 'thisyear',    label: 'Dit jaar' },
+  { value: 'lastyear',    label: 'Vorig jaar' },
+];
+
+// Periods that map directly to Reporting Ninja presets
+const PERIOD_PRESETS = {
+  last7days: 'last7days',
+  last30days: 'last30days',
+  thismonth: 'thismonth',
+  lastmonth: 'lastmonth',
+  thisyear: 'thisyear',
+};
+
+let selectedPeriod   = 'last30days';
+let customStartDate  = '';
+let customEndDate    = '';
+let periodDropdownOpen = false;
+let customPickerOpen   = false;
+
+function fmtDateISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function computePeriodDates(value) {
+  const today     = new Date();
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const y = today.getFullYear(), m = today.getMonth();
+
+  switch (value) {
+    case 'last7days': {
+      const s = new Date(yesterday); s.setDate(yesterday.getDate() - 6);
+      return { start: fmtDateISO(s), end: fmtDateISO(yesterday), days: 7 };
+    }
+    case 'last14days': {
+      const s = new Date(yesterday); s.setDate(yesterday.getDate() - 13);
+      return { start: fmtDateISO(s), end: fmtDateISO(yesterday), days: 14 };
+    }
+    case 'last30days': {
+      const s = new Date(yesterday); s.setDate(yesterday.getDate() - 29);
+      return { start: fmtDateISO(s), end: fmtDateISO(yesterday), days: 30 };
+    }
+    case 'last90days': {
+      const s = new Date(yesterday); s.setDate(yesterday.getDate() - 89);
+      return { start: fmtDateISO(s), end: fmtDateISO(yesterday), days: 90 };
+    }
+    case 'thismonth': {
+      const s = new Date(y, m, 1);
+      const days = Math.ceil((yesterday - s) / 86400000) + 1;
+      return { start: fmtDateISO(s), end: fmtDateISO(yesterday), days };
+    }
+    case 'lastmonth': {
+      const s = new Date(y, m - 1, 1);
+      const e = new Date(y, m, 0);
+      return { start: fmtDateISO(s), end: fmtDateISO(e), days: e.getDate() };
+    }
+    case 'thisquarter': {
+      const qs = Math.floor(m / 3) * 3;
+      const s = new Date(y, qs, 1);
+      const days = Math.ceil((yesterday - s) / 86400000) + 1;
+      return { start: fmtDateISO(s), end: fmtDateISO(yesterday), days };
+    }
+    case 'lastquarter': {
+      const qs = Math.floor(m / 3) * 3 - 3;
+      const s = qs < 0 ? new Date(y - 1, 9, 1)  : new Date(y, qs, 1);
+      const e = qs < 0 ? new Date(y - 1, 12, 0) : new Date(y, qs + 3, 0);
+      const days = Math.ceil((e - s) / 86400000) + 1;
+      return { start: fmtDateISO(s), end: fmtDateISO(e), days };
+    }
+    case 'thisyear': {
+      const s = new Date(y, 0, 1);
+      const days = Math.ceil((yesterday - s) / 86400000) + 1;
+      return { start: fmtDateISO(s), end: fmtDateISO(yesterday), days };
+    }
+    case 'lastyear': {
+      const s = new Date(y - 1, 0, 1);
+      const e = new Date(y - 1, 11, 31);
+      const days = Math.ceil((e - s) / 86400000) + 1;
+      return { start: fmtDateISO(s), end: fmtDateISO(e), days };
+    }
+    case 'custom': {
+      if (!customStartDate || !customEndDate) return null;
+      const s = new Date(customStartDate), e = new Date(customEndDate);
+      const days = Math.ceil((e - s) / 86400000) + 1;
+      return { start: customStartDate, end: customEndDate, days };
+    }
+    default: return null;
+  }
+}
+
+function getPeriodApiDateRange(value) {
+  if (value === undefined) value = selectedPeriod;
+  if (value === 'custom') return { start_date: customStartDate, end_date: customEndDate };
+  if (PERIOD_PRESETS[value]) return { preset: PERIOD_PRESETS[value] };
+  const dates = computePeriodDates(value);
+  return dates ? { start_date: dates.start, end_date: dates.end } : { preset: 'last30days' };
+}
+
+function fmtDisplayDate(isoStr) {
+  if (!isoStr) return '';
+  const [, m, d] = isoStr.split('-');
+  const months = ['jan','feb','mrt','apr','mei','jun','jul','aug','sep','okt','nov','dec'];
+  return `${parseInt(d)} ${months[parseInt(m)-1]}`;
+}
+
+function updatePeriodUI() {
+  const info   = computePeriodDates(selectedPeriod);
+  const preview = document.getElementById('period-preview');
+  const label   = document.getElementById('period-btn-label');
+
+  if (info && preview) {
+    preview.textContent = `${fmtDisplayDate(info.start)} – ${fmtDisplayDate(info.end)} · ${info.days} dagen`;
+  }
+
+  const p = selectedPeriod === 'custom'
+    ? { label: `${fmtDisplayDate(customStartDate)} – ${fmtDisplayDate(customEndDate)}` }
+    : PERIODS.find(x => x.value === selectedPeriod);
+  if (p && label) label.textContent = p.label;
+
+  document.querySelectorAll('.period-opt').forEach(btn => {
+    const active = btn.dataset.period === selectedPeriod;
+    btn.classList.toggle('active', active);
+    const check = btn.querySelector('.period-check');
+    if (check) check.style.display = active ? 'inline-flex' : 'none';
+  });
+
+  const customToggle = document.getElementById('custom-toggle');
+  if (customToggle) customToggle.classList.toggle('active', selectedPeriod === 'custom');
+}
+
+function initPeriodPicker() {
+  const opts = document.getElementById('period-options');
+  if (!opts) return;
+
+  opts.innerHTML = PERIODS.map(p => `
+    <button class="period-opt${selectedPeriod === p.value ? ' active' : ''}"
+            data-period="${p.value}"
+            type="button"
+            onclick="selectPeriod('${p.value}')">
+      ${p.label}
+      <svg class="period-check" style="display:${selectedPeriod === p.value ? 'inline-flex' : 'none'}"
+           width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+        <path fill-rule="evenodd" d="M12.207 3.793a1 1 0 010 1.414l-6 6a1 1 0 01-1.414 0l-3-3a1 1 0 011.414-1.414L5.5 9.086l5.293-5.293a1 1 0 011.414 0z"/>
+      </svg>
+    </button>
+  `).join('');
+
+  const dates = computePeriodDates('last30days');
+  const startInput = document.getElementById('custom-start');
+  const endInput   = document.getElementById('custom-end');
+  if (startInput) startInput.value = dates.start;
+  if (endInput)   endInput.value   = dates.end;
+
+  updatePeriodUI();
+
+  document.addEventListener('click', (e) => {
+    const picker = document.getElementById('period-picker');
+    if (picker && !picker.contains(e.target)) closePeriodDropdown();
+  });
+}
+
+function togglePeriodDropdown(e) {
+  e.stopPropagation();
+  const dd      = document.getElementById('period-dropdown');
+  const chevron = document.getElementById('period-chevron');
+  periodDropdownOpen = !periodDropdownOpen;
+  dd.classList.toggle('hidden', !periodDropdownOpen);
+  chevron.classList.toggle('open', periodDropdownOpen);
+}
+
+function closePeriodDropdown() {
+  const dd      = document.getElementById('period-dropdown');
+  const chevron = document.getElementById('period-chevron');
+  if (dd)      dd.classList.add('hidden');
+  if (chevron) chevron.classList.remove('open');
+  periodDropdownOpen = false;
+}
+
+function selectPeriod(value) {
+  selectedPeriod = value;
+  closePeriodDropdown();
+  updatePeriodUI();
+  if (currentClientId) loadReport();
+}
+
+function toggleCustomPicker() {
+  customPickerOpen = !customPickerOpen;
+  const form    = document.getElementById('custom-form');
+  const chevron = document.getElementById('custom-chevron');
+  if (form)    form.classList.toggle('hidden', !customPickerOpen);
+  if (chevron) chevron.style.transform = customPickerOpen ? 'rotate(180deg)' : '';
+}
+
+function applyCustomPeriod() {
+  const start = document.getElementById('custom-start')?.value;
+  const end   = document.getElementById('custom-end')?.value;
+  if (!start || !end) return;
+  customStartDate = start;
+  customEndDate   = end;
+  selectedPeriod  = 'custom';
+  closePeriodDropdown();
+  updatePeriodUI();
+  if (currentClientId) loadReport();
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 (function init() {
   const sel = document.getElementById('client-select');
@@ -13,6 +227,7 @@ let currentNoteKey  = null;   // "clientId|YYYY-MM"
     sel.appendChild(o);
   });
   sel.addEventListener('change', () => { if (sel.value) loadReport(); });
+  initPeriodPicker();
 })();
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
@@ -546,8 +761,6 @@ async function loadReport() {
   clearError();
 
   const clientId = document.getElementById('client-select').value;
-  const period   = document.getElementById('period-select').value;
-
   if (!clientId) { showError('Selecteer een klant.'); return; }
 
   const client = (CLIENTS || []).find(c => c.id === clientId);
@@ -556,6 +769,8 @@ async function loadReport() {
   currentClientId = clientId;
 
   document.getElementById('header-client').textContent = client.name;
+  const sep = document.getElementById('header-client-sep');
+  if (sep) sep.style.display = '';
   document.getElementById('setup-notice').classList.add('hidden');
 
   hide('kpi-section');
@@ -567,11 +782,10 @@ async function loadReport() {
 
   setLoading(true);
 
-  const dateRange     = { preset: period };
+  const dateRange     = getPeriodApiDateRange();
   const yearDateRange = { preset: 'thisyear' };
 
   try {
-    // Load selected period + full year in parallel
     const [
       metaRes, googleRes, pintRes,
       metaYear, googleYear, pintYear,
@@ -585,7 +799,7 @@ async function loadReport() {
     ]);
 
     const ok = r => r.status === 'fulfilled' ? r.value : [];
-    const metaRows  = ok(metaRes);
+    const metaRows   = ok(metaRes);
     const googleRows = ok(googleRes);
     const pintRows   = ok(pintRes);
 
@@ -606,13 +820,17 @@ async function loadReport() {
                       + pintRows.reduce((s, r) => s + parseFloat(r.IMPRESSION_1 || 0), 0);
     const avgCPC = totalClicks > 0 ? totalSpend / totalClicks : 0;
 
-    const periodLabel = { lastmonth:'Vorige maand', thismonth:'Deze maand', last7days:'Laatste 7 dagen', last30days:'Laatste 30 dagen', last90days:'Laatste 90 dagen' }[period] || period;
-    document.getElementById('kpi-sub').textContent = `Geselecteerde periode: ${periodLabel} · alle platformen`;
+    const periodInfo  = computePeriodDates(selectedPeriod);
+    const periodLabel = selectedPeriod === 'custom'
+      ? `${fmtDisplayDate(customStartDate)} – ${fmtDisplayDate(customEndDate)}`
+      : (PERIODS.find(p => p.value === selectedPeriod)?.label || selectedPeriod);
 
     const headingEl = document.getElementById('kpi-heading');
-    const subEl = document.getElementById('kpi-sub');
+    const subEl     = document.getElementById('kpi-sub');
     if (headingEl) headingEl.textContent = 'Samenvatting — ' + client.name;
-    if (subEl) subEl.textContent = 'Geselecteerde periode: ' + periodLabel + ' · alle gekoppelde platformen';
+    if (subEl) subEl.textContent = 'Periode: ' + periodLabel
+      + (periodInfo ? ` (${periodInfo.days} dagen)` : '')
+      + ' · alle gekoppelde platformen';
 
     const kpiGrid = document.getElementById('kpi-grid');
     kpiGrid.innerHTML = [
@@ -632,19 +850,14 @@ async function loadReport() {
     `).join('');
     show('kpi-section');
 
-    // ── Summary charts ──
     renderSummaryCharts(metaRows, googleRows, pintRows);
-
-    // ── Platform pages ──
     renderMeta(metaRows);
     renderGoogle(googleRows);
     renderPinterest(pintRows);
 
-    // ── Yearly table ──
     const yearlyRows = buildYearlyTable(ok(metaYear), ok(googleYear), ok(pintYear));
     _yearlyRowCache = yearlyRows;
     if (yearlyRows.length) {
-      document.getElementById('yearly-period').textContent = 'Dit jaar';
       renderYearlyTable(yearlyRows);
       show('yearly-section');
     }

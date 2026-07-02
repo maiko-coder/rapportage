@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Marketing Rapportage</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -11,7 +13,9 @@
 
 <header class="site-header">
   <div class="header-brand">
+    <div class="brand-logo">R</div>
     <span class="brand-title">Rapportage</span>
+    <span class="brand-sep" id="header-client-sep" style="display:none">·</span>
     <span class="brand-client" id="header-client"></span>
   </div>
   <div class="header-controls">
@@ -21,12 +25,37 @@
     </div>
     <div class="ctrl-group">
       <label>Periode</label>
-      <select id="period-select">
-        <option value="lastmonth">Vorige maand</option>
-        <option value="thismonth">Deze maand</option>
-        <option value="last30days">Laatste 30 dagen</option>
-        <option value="last7days">Laatste 7 dagen</option>
-      </select>
+      <div class="period-picker" id="period-picker">
+        <div class="period-preview" id="period-preview"></div>
+        <button class="period-btn" id="period-btn" type="button" onclick="togglePeriodDropdown(event)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="1" y="2" width="14" height="13" rx="2"/><path d="M5 1v2M11 1v2M1 6h14"/>
+          </svg>
+          <span class="period-btn-label" id="period-btn-label">Laatste 30 dagen</span>
+          <svg class="period-chevron" id="period-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 4l4 4 4-4"/>
+          </svg>
+        </button>
+        <div class="period-dropdown hidden" id="period-dropdown">
+          <div class="period-options" id="period-options"></div>
+          <div class="period-divider"></div>
+          <button class="period-custom-toggle" id="custom-toggle" onclick="toggleCustomPicker()" type="button">
+            <span>Aangepaste periode</span>
+            <svg id="custom-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 4l4 4 4-4"/>
+            </svg>
+          </button>
+          <div class="period-custom-form hidden" id="custom-form">
+            <label>Van datum
+              <input type="date" id="custom-start" />
+            </label>
+            <label>Tot datum
+              <input type="date" id="custom-end" />
+            </label>
+            <button class="period-apply-btn" onclick="applyCustomPeriod()" type="button">Toepassen</button>
+          </div>
+        </div>
+      </div>
     </div>
     <button id="load-btn" onclick="loadReport()">Vernieuwen</button>
   </div>
@@ -35,20 +64,22 @@
 <div class="layout">
 
   <nav class="sidebar">
+    <div class="nav-section">Weergave</div>
     <button class="nav-item active" onclick="showPage('samenvatting', this)">
-      <svg viewBox="0 0 20 20"><path d="M3 3h6v6H3zM11 3h6v6h-6zM3 11h6v6H3zM11 11h6v6h-6z"/></svg>
+      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h6v6H3zM11 3h6v6h-6zM3 11h6v6H3zM11 11h6v6h-6z"/></svg>
       Samenvatting
     </button>
+    <div class="nav-section">Platformen</div>
     <button class="nav-item" onclick="showPage('meta', this)">
-      <svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>
+      <svg viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="8"/></svg>
       Meta Ads
     </button>
     <button class="nav-item" onclick="showPage('google', this)">
-      <svg viewBox="0 0 20 20"><path d="M10 2a8 8 0 100 16A8 8 0 0010 2zm0 14a6 6 0 110-12 6 6 0 010 12z"/></svg>
+      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a8 8 0 100 16A8 8 0 0010 2zm0 14a6 6 0 110-12 6 6 0 010 12z"/></svg>
       Google Ads
     </button>
     <button class="nav-item" onclick="showPage('pinterest', this)">
-      <svg viewBox="0 0 20 20"><path d="M10 2C5.58 2 2 5.58 2 10c0 3.3 1.95 6.16 4.77 7.49-.07-.6-.13-1.52.03-2.17l.91-3.84s-.23-.47-.23-1.16c0-1.09.63-1.9 1.41-1.9.67 0 .99.5.99 1.1 0 .67-.43 1.68-.65 2.61-.18.78.38 1.41 1.14 1.41 1.37 0 2.34-1.75 2.34-3.82 0-1.58-1.07-2.68-2.59-2.68-1.76 0-2.8 1.32-2.8 2.69 0 .53.2 1.1.46 1.41.05.06.06.11.04.17l-.17.7c-.03.1-.09.13-.21.08C5.8 12.1 5 10.65 5 9.36 5 7.1 6.71 5 9.7 5c2.44 0 4.34 1.74 4.34 4.06 0 2.42-1.53 4.37-3.65 4.37-.71 0-1.38-.37-1.61-.81l-.44 1.63c-.16.61-.59 1.38-.88 1.85.66.2 1.36.32 2.09.32 4.42 0 8-3.58 8-8S14.42 2 10 2z"/></svg>
+      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2C5.58 2 2 5.58 2 10c0 3.3 1.95 6.16 4.77 7.49-.07-.6-.13-1.52.03-2.17l.91-3.84s-.23-.47-.23-1.16c0-1.09.63-1.9 1.41-1.9.67 0 .99.5.99 1.1 0 .67-.43 1.68-.65 2.61-.18.78.38 1.41 1.14 1.41 1.37 0 2.34-1.75 2.34-3.82 0-1.58-1.07-2.68-2.59-2.68-1.76 0-2.8 1.32-2.8 2.69 0 .53.2 1.1.46 1.41.05.06.06.11.04.17l-.17.7c-.03.1-.09.13-.21.08C5.8 12.1 5 10.65 5 9.36 5 7.1 6.71 5 9.7 5c2.44 0 4.34 1.74 4.34 4.06 0 2.42-1.53 4.37-3.65 4.37-.71 0-1.38-.37-1.61-.81l-.44 1.63c-.16.61-.59 1.38-.88 1.85.66.2 1.36.32 2.09.32 4.42 0 8-3.58 8-8S14.42 2 10 2z"/></svg>
       Pinterest Ads
     </button>
   </nav>
