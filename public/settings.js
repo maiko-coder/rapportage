@@ -4,6 +4,34 @@ let currentSettings = { clients: {} };
 // Track which password fields were explicitly changed
 const pwChanged = {};
 
+// ─── Local storage fallback (Vercel /tmp is ephemeral) ───────────────────────
+const LS_KEY = 'rapportage_settings';
+
+function loadLocalSettings() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch { return null; }
+}
+
+function saveLocalSettings(data) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch {}
+}
+
+function mergeWithLocal(serverData) {
+  const local = loadLocalSettings();
+  if (!local) return serverData;
+  // Merge: server is authoritative for passwords; local fills in the rest
+  const merged = { clients: { ...serverData.clients } };
+  for (const [id, localCfg] of Object.entries(local.clients || {})) {
+    const srv = serverData.clients[id] || {};
+    merged.clients[id] = {
+      ...localCfg,
+      // Keep server password state (masked or empty)
+      ...(srv.password !== undefined ? { password: srv.password } : {}),
+      _hasPassword: !!srv.password || srv._hasPassword,
+    };
+  }
+  return merged;
+}
+
 const PLATFORM_LABELS = { meta: 'Meta Ads', google: 'Google Ads', pinterest: 'Pinterest Ads' };
 const PLATFORM_BADGE_CLASS = { meta: 'badge-meta', google: 'badge-google', pinterest: 'badge-pinterest' };
 
@@ -11,9 +39,10 @@ const PLATFORM_BADGE_CLASS = { meta: 'badge-meta', google: 'badge-google', pinte
 (async function init() {
   try {
     const r = await fetch('/api/settings');
-    currentSettings = await r.json();
+    const serverData = await r.json();
+    currentSettings = mergeWithLocal(serverData);
   } catch {
-    currentSettings = { clients: {} };
+    currentSettings = loadLocalSettings() || { clients: {} };
   }
   renderAll();
 })();
@@ -231,6 +260,9 @@ async function saveAll() {
     payload.clients[id] = entry;
   }
 
+  // Always save to localStorage first (works on Vercel where /tmp is ephemeral)
+  saveLocalSettings(payload);
+
   try {
     const r = await fetch('/api/settings', {
       method: 'POST',
@@ -239,14 +271,10 @@ async function saveAll() {
     });
     const data = await r.json();
     if (data.ok) {
-      // Clear changed flags
       Object.keys(pwChanged).forEach(k => delete pwChanged[k]);
-
-      // Refresh settings from server (to update has-password state)
       const fresh = await fetch('/api/settings');
-      currentSettings = await fresh.json();
+      currentSettings = mergeWithLocal(await fresh.json());
       renderAll();
-
       statusEl.textContent = 'Opgeslagen ✓';
       statusEl.className = 'settings-save-status success';
       setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'settings-save-status'; }, 3000);
@@ -254,8 +282,13 @@ async function saveAll() {
       throw new Error('Server fout');
     }
   } catch (err) {
-    statusEl.textContent = 'Fout bij opslaan: ' + err.message;
-    statusEl.className = 'settings-save-status error';
+    // Server save failed (e.g. Vercel cold start) but localStorage save succeeded
+    Object.keys(pwChanged).forEach(k => delete pwChanged[k]);
+    currentSettings = mergeWithLocal(loadLocalSettings() || payload);
+    renderAll();
+    statusEl.textContent = 'Opgeslagen (lokaal) ✓';
+    statusEl.className = 'settings-save-status success';
+    setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'settings-save-status'; }, 3000);
   }
 }
 
