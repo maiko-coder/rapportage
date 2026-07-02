@@ -363,7 +363,21 @@ async function loadPinterest(client, dateRange) {
     account_id: client.pinterest.account_id, data_view: client.pinterest.data_view || 'campaign',
     settings: { click_window: '30', view_window: '1', engagement_window: '30', conversion_report_time: 'TIME_OF_AD_ACTION' },
     fields: ['DAY', 'CAMPAIGN_NAME', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR', 'ECPC_IN_DOLLAR'],
-    date_range: dateRange, limit: 500,
+    date_range: dateRange, limit: 2000,
+  });
+  return d.data?.rows || [];
+}
+
+// Separate yearly Pinterest query: advertiser-level (1 row/day instead of per campaign),
+// so a full year stays well within limits.
+async function loadPinterestYearly(client, dateRange) {
+  if (!client.pinterest) return [];
+  const d = await apiPost('/api/query', {
+    integration_id: 'pinterest_ads', connection_key: client.pinterest.connection_key,
+    account_id: client.pinterest.account_id, data_view: 'advertiser',
+    settings: { click_window: '30', view_window: '1', engagement_window: '30', conversion_report_time: 'TIME_OF_AD_ACTION' },
+    fields: ['DAY', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR'],
+    date_range: dateRange, limit: 1000,
   });
   return d.data?.rows || [];
 }
@@ -570,13 +584,15 @@ async function loadReport(forcedClientId) {
   try {
     const [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear] = await Promise.allSettled([
       loadMeta(client, dateRange), loadGoogle(client, dateRange), loadPinterest(client, dateRange),
-      loadMeta(client, yearDateRange), loadGoogle(client, yearDateRange), loadPinterest(client, yearDateRange),
+      loadMeta(client, yearDateRange), loadGoogle(client, yearDateRange), loadPinterestYearly(client, yearDateRange),
     ]);
 
     const ok = r => r.status === 'fulfilled' ? r.value : [];
     const metaRows = ok(metaRes), googleRows = ok(googleRes), pintRows = ok(pintRes);
 
-    const errs = [metaRes, googleRes, pintRes].filter(r=>r.status==='rejected').map((r,i)=>['Meta','Google','Pinterest'][i]+': '+r.reason?.message);
+    const allResults = [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear];
+    const allLabels  = ['Meta', 'Google', 'Pinterest', 'Meta (jaar)', 'Google (jaar)', 'Pinterest (jaar)'];
+    const errs = allResults.filter(r=>r.status==='rejected').map((r,i)=>allLabels[i]+': '+r.reason?.message);
     if (errs.length) showError(errs.join(' | '));
 
     const totalSpend  = metaRows.reduce((s,r)=>s+parseFloat(r.spend||0),0) + googleRows.reduce((s,r)=>s+micros(r['metrics.cost_micros']),0) + pintRows.reduce((s,r)=>s+parseFloat(r.SPEND_IN_DOLLAR||0),0);
