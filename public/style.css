@@ -111,38 +111,44 @@ select:focus { border-color: var(--orange); }
 /* ── PERIOD PICKER ──────────────────────────── */
 .period-picker { position: relative; }
 
-.period-preview {
-  font-size: 10px;
-  font-weight: 500;
-  color: #1d4ed8;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  border-radius: 4px;
-  padding: 2px 7px;
-  margin-bottom: 3px;
-  white-space: nowrap;
-}
-
 .period-btn {
   display: flex;
-  align-items: center;
-  gap: 7px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0 10px;
+  padding: 5px 10px 6px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text);
   cursor: pointer;
-  min-width: 200px;
-  height: 36px;
+  min-width: 210px;
+  height: auto;
+  min-height: 36px;
   transition: border-color 0.12s;
   white-space: nowrap;
   font-family: var(--font);
 }
 .period-btn:hover { border-color: var(--orange); }
+
+.period-btn-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  line-height: 1;
+}
 .period-btn-label { flex: 1; text-align: left; }
+.period-btn-info {
+  font-size: 10px;
+  font-weight: 500;
+  color: #2563eb;
+  padding-left: 21px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
 .period-chevron { transition: transform 0.15s; flex-shrink: 0; }
 .period-chevron.open { transform: rotate(180deg); }
 

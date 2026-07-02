@@ -118,12 +118,12 @@ function fmtDisplayDate(isoStr) {
 }
 
 function updatePeriodUI() {
-  const info   = computePeriodDates(selectedPeriod);
-  const preview = document.getElementById('period-preview');
+  const info    = computePeriodDates(selectedPeriod);
+  const btnInfo = document.getElementById('period-btn-info');
   const label   = document.getElementById('period-btn-label');
 
-  if (info && preview) {
-    preview.textContent = `${fmtDisplayDate(info.start)} – ${fmtDisplayDate(info.end)} · ${info.days} dagen`;
+  if (info && btnInfo) {
+    btnInfo.textContent = `${fmtDisplayDate(info.start)} – ${fmtDisplayDate(info.end)} · ${info.days} dagen`;
   }
 
   const p = selectedPeriod === 'custom'
