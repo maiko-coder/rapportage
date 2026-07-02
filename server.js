@@ -10,12 +10,20 @@ const API_KEY  = 'x8mgquMubZtKRsmOQyaW';
 const API_BASE = 'https://api.reportingninja.com/v1';
 
 // ─── Settings store ───────────────────────────────────────────────────────────
-const DATA_DIR      = path.join(__dirname, 'data');
+// On Vercel (serverless) the project dir is read-only → use /tmp.
+// /tmp is writable but ephemeral (resets on cold start), which is fine for this tool.
+// Locally, settings persist in ./data/settings.json.
+const IS_VERCEL     = !!process.env.VERCEL;
+const DATA_DIR      = IS_VERCEL ? '/tmp' : path.join(__dirname, 'data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-if (!fs.existsSync(SETTINGS_FILE)) {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ clients: {} }, null, 2));
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(SETTINGS_FILE)) {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ clients: {} }, null, 2));
+  }
+} catch (e) {
+  console.error('Settings init error (non-fatal):', e.message);
 }
 
 function readSettings() {
@@ -24,7 +32,8 @@ function readSettings() {
 }
 
 function writeSettings(data) {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2));
+  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2)); }
+  catch (e) { console.error('writeSettings error:', e.message); }
 }
 
 function hashPassword(pw) {
@@ -38,12 +47,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── Client view (shareable link) ────────────────────────────────────────────
 app.get('/r/:clientId', (req, res) => {
   const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
-  const html = fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8');
-  const injected = html.replace(
-    '</head>',
-    `<script>window.CLIENT_MODE="${clientId}";</script>\n</head>`
-  );
-  res.send(injected);
+  try {
+    const html = fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8');
+    const injected = html.replace(
+      '</head>',
+      `<script>window.CLIENT_MODE="${clientId}";</script>\n</head>`
+    );
+    res.send(injected);
+  } catch (e) {
+    res.status(500).send('Pagina niet gevonden');
+  }
 });
 
 // ─── Settings page ────────────────────────────────────────────────────────────
