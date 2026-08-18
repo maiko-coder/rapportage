@@ -54,10 +54,10 @@ function computePeriodDates(value) {
 
 function getPeriodApiDateRange(value) {
   if (value === undefined) value = selectedPeriod;
-  if (value === 'custom') return { preset: 'custom', start_date: customStartDate, end_date: customEndDate };
+  if (value === 'custom') return { preset: 'custom', start: customStartDate, end: customEndDate };
   const d = computePeriodDates(value);
   const r = d || computePeriodDates('last30days');
-  return { preset: 'custom', start_date: r.start, end_date: r.end };
+  return { preset: 'custom', start: r.start, end: r.end };
 }
 
 function fmtDisplayDate(iso) {
@@ -585,7 +585,7 @@ async function loadReport(forcedClientId) {
 
   const dateRange     = getPeriodApiDateRange();
   const yd            = computePeriodDates('thisyear');
-  const yearDateRange = yd ? { preset: 'custom', start_date: yd.start, end_date: yd.end } : dateRange;
+  const yearDateRange = yd ? { preset: 'custom', start: yd.start, end: yd.end } : dateRange;
 
   try {
     const [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear] = await Promise.allSettled([
