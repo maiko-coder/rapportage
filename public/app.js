@@ -364,26 +364,48 @@ async function loadGoogle(client, dateRange) {
 
 async function loadPinterest(client, dateRange) {
   if (!client.pinterest) return [];
+  const clipped = dateRange?.start && dateRange?.end
+    ? clipToPinterestWindow(dateRange.start, dateRange.end)
+    : dateRange;
+  if (!clipped) return [];
   const d = await apiPost('/api/query', {
     integration_id: 'pinterest_ads', connection_key: client.pinterest.connection_key,
     account_id: client.pinterest.account_id, data_view: client.pinterest.data_view || 'campaign',
     settings: { click_window: '30', view_window: '1', engagement_window: '30', conversion_report_time: 'TIME_OF_AD_ACTION' },
     fields: ['DAY', 'CAMPAIGN_NAME', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR', 'ECPC_IN_DOLLAR'],
-    date_range: dateRange, limit: 2000,
+    date_range: { preset: 'custom', ...clipped }, limit: 2000,
   });
   return d.data?.rows || [];
+}
+
+// Pinterest's own Ads API only allows querying data from at most 90 days before
+// today, and rejects any request that reaches further back — regardless of range
+// length. So clip the requested range to that rolling 90-day window before querying;
+// anything older simply isn't available and is silently omitted (no error).
+const PINTEREST_MAX_LOOKBACK_DAYS = 90;
+
+function clipToPinterestWindow(start, end) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const floor = new Date(today); floor.setDate(floor.getDate() - (PINTEREST_MAX_LOOKBACK_DAYS - 1));
+  const s = new Date(start), e = new Date(end);
+  if (e < floor) return null; // entire range is older than the allowed window
+  return { start: fmtDateISO(s < floor ? floor : s), end: fmtDateISO(e) };
 }
 
 // Separate yearly Pinterest query: account-level (1 row/day instead of per campaign),
 // so a full year stays well within limits.
 async function loadPinterestYearly(client, dateRange) {
   if (!client.pinterest) return [];
+  const clipped = dateRange?.start && dateRange?.end
+    ? clipToPinterestWindow(dateRange.start, dateRange.end)
+    : dateRange;
+  if (!clipped) return [];
   const d = await apiPost('/api/query', {
     integration_id: 'pinterest_ads', connection_key: client.pinterest.connection_key,
     account_id: client.pinterest.account_id, data_view: 'account',
     settings: { click_window: '30', view_window: '1', engagement_window: '30', conversion_report_time: 'TIME_OF_AD_ACTION' },
     fields: ['DAY', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR'],
-    date_range: dateRange, limit: 1000,
+    date_range: { preset: 'custom', ...clipped }, limit: 1000,
   });
   return d.data?.rows || [];
 }
