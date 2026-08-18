@@ -191,7 +191,21 @@ app.get('/api/client-config/:clientId', (req, res) => {
     hasPassword:      !!cfg.password,
     platforms:        cfg.platforms        || null,
     accountOverrides: cfg.accountOverrides || {},
+    reportLayout:     cfg.reportLayout     || null,
   });
+});
+
+// ─── API: save report layout (marketeer-only — drag-and-drop widget config) ──
+app.post('/api/client-config/:clientId/layout', requireAuth, (req, res) => {
+  const clientId     = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
+  const { reportLayout } = req.body;
+  if (!reportLayout || typeof reportLayout !== 'object') {
+    return res.status(400).json({ error: 'reportLayout ontbreekt of is ongeldig.' });
+  }
+  const current = readSettings();
+  current.clients[clientId] = { ...(current.clients[clientId] || {}), reportLayout };
+  writeSettings(current);
+  res.json({ ok: true });
 });
 
 // ─── Reporting Ninja proxy ────────────────────────────────────────────────────

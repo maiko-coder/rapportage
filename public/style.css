@@ -330,6 +330,7 @@ select:focus { border-color: var(--orange); }
   min-width: 0;
   max-width: calc(var(--sidebar-w) + var(--content-max) + 96px);
 }
+.main-content.edit-mode-padding { padding-bottom: 96px; }
 
 /* ── PAGES ──────────────────────────────────── */
 .page { display: none; }
@@ -497,6 +498,120 @@ select:focus { border-color: var(--orange); }
   color: var(--text-light);
   margin-top: 12px;
   text-align: right;
+}
+
+/* ── WIDGETS ────────────────────────────────── */
+.widgets-container { display: flex; flex-direction: column; gap: 20px; margin-bottom: 24px; }
+
+.widget-block { position: relative; }
+.widget-chart .widget-body {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px 16px;
+}
+
+.widget-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.widget-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+.edit-only { display: none; }
+.widgets-container.edit-on .edit-only { display: inline-flex; }
+.widgets-container.edit-on .widget-header {
+  background: var(--orange-light);
+  border: 1px dashed var(--orange-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.widgets-container.edit-on .widget-block { border-radius: 10px; }
+.widget-drag-handle {
+  cursor: grab;
+  font-size: 13px;
+  color: var(--text-light);
+  letter-spacing: -1px;
+  user-select: none;
+}
+.widget-toolbar-actions { gap: 4px; }
+.widget-icon-btn {
+  background: var(--surface);
+  border: 1px solid var(--orange-border);
+  border-radius: 6px;
+  width: 24px; height: 24px;
+  cursor: pointer;
+  color: var(--orange-dark);
+  font-size: 12px;
+  line-height: 1;
+}
+.widget-icon-btn:hover { background: #fff; }
+.widget-icon-danger { color: #b91c1c; border-color: #fecaca; }
+.widget-icon-danger:hover { background: #fef2f2; }
+
+.widget-empty, .widgets-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 24px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.page-toolbar { margin-bottom: 16px; }
+
+.sortable-ghost { opacity: 0.35; }
+.sortable-chosen .widget-header { border-color: var(--orange); }
+
+/* ── EDIT MODE NAV BUTTON ───────────────────── */
+#edit-mode-btn.active {
+  color: var(--orange-dark);
+  background: var(--orange-light);
+}
+
+/* ── LAYOUT SAVE BAR ────────────────────────── */
+.layout-save-bar {
+  position: fixed;
+  left: var(--sidebar-w);
+  right: 0;
+  bottom: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 14px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: 150;
+  box-shadow: 0 -4px 16px rgba(15,23,42,0.06);
+}
+.layout-save-actions { display: flex; gap: 8px; }
+
+/* ── WIDGET EDITOR MODAL ────────────────────── */
+.widget-editor-modal { width: 460px; max-height: 84vh; overflow-y: auto; }
+.widget-editor-hint { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+.metric-group + .metric-group { margin-top: 14px; }
+.metric-group-title {
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-light);
+  margin-bottom: 8px;
+}
+.metric-checklist { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.metric-check {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text);
+  cursor: pointer;
+}
+.metric-check input[type=checkbox] { width: 14px; height: 14px; accent-color: var(--orange); cursor: pointer; }
+.widget-editor-modal select {
+  width: 100%; min-width: 0;
 }
 
 /* ── SECTION HEADING ────────────────────────── */

@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -100,8 +101,12 @@
       Pinterest Ads
     </button>
 
-    <!-- Settings link — hidden in CLIENT_MODE -->
+    <!-- Rapport aanpassen — marketeer-only, hidden in CLIENT_MODE -->
     <div class="nav-spacer"></div>
+    <button class="nav-item" id="edit-mode-btn" onclick="toggleEditMode()">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
+      Rapport aanpassen
+    </button>
     <div class="nav-divider-line" id="settings-nav-divider"></div>
     <a href="/settings" class="nav-item nav-item-link" id="settings-nav-link">
       <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
@@ -120,163 +125,91 @@
 
     <!-- ── SAMENVATTING ── -->
     <div id="page-samenvatting" class="page active">
-
       <div id="setup-notice" class="notice">Selecteer een klant om te beginnen.</div>
-
-      <div id="kpi-section" class="hidden">
-        <div class="page-header">
-          <h1 id="kpi-heading">Samenvatting</h1>
-          <p id="kpi-sub"></p>
-        </div>
-        <div class="kpi-strip" id="kpi-grid"></div>
+      <div class="page-header">
+        <h1 id="kpi-heading">Samenvatting</h1>
+        <p id="kpi-sub"></p>
       </div>
-
-      <div id="summary-charts" class="hidden">
-        <div class="chart-block">
-          <div class="chart-title">Uitgaven per dag</div>
-          <div class="chart-desc">Dagelijkse advertentie-uitgaven in euro's per platform. Zo zie je op welke dagen het budget wordt ingezet en of er pieken of dalen zijn.</div>
-          <canvas id="summary-spend-chart"></canvas>
-          <div class="chart-source">Bron: Meta · Google Ads · Pinterest · geselecteerde periode</div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-title">Clicks per dag</div>
-          <div class="chart-desc">Aantal klikken op je advertenties per dag per platform. Een stijgende lijn bij gelijkblijvend budget wijst op betere prestaties.</div>
-          <canvas id="summary-clicks-chart"></canvas>
-          <div class="chart-source">Bron: Meta · Google Ads · Pinterest · geselecteerde periode</div>
-        </div>
+      <div class="page-toolbar hidden" id="toolbar-samenvatting">
+        <button class="btn-sm" onclick="addWidget('samenvatting')">+ Widget toevoegen</button>
       </div>
-
-      <div id="yearly-section" class="hidden">
-        <div class="section-heading">
-          <h2>Maandoverzicht dit jaar</h2>
-          <p>Totale uitgaven en clicks per platform, gegroepeerd per maand. Klik op + om een notitie toe te voegen aan een maand.</p>
-        </div>
-        <div class="table-wrapper">
-          <table id="yearly-table">
-            <thead>
-              <tr>
-                <th>Maand</th>
-                <th class="num">Meta</th>
-                <th class="num">Google</th>
-                <th class="num">Pinterest</th>
-                <th class="num">Totaal uitgaven</th>
-                <th class="num">Totaal clicks</th>
-                <th class="note-col"></th>
-              </tr>
-            </thead>
-            <tbody id="yearly-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-
+      <div id="widgets-samenvatting" class="widgets-container" data-page="samenvatting"></div>
     </div>
 
     <!-- ── META ── -->
     <div id="page-meta" class="page hidden">
-      <div id="meta-content" class="hidden">
-        <div class="page-header">
-          <h1>Meta Ads</h1>
-          <p>Betaalde advertenties via Facebook en Instagram. Hieronder zie je de totale prestaties, dagelijkse trends en een uitsplitsing per campagne.</p>
-        </div>
-        <div class="platform-kpi-card">
-          <div class="pkpi-icon">
-            <svg width="40" height="40" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#1877f2"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="22" font-weight="700" font-family="sans-serif">M</text></svg>
-          </div>
-          <div class="pkpi-grid" id="meta-kpis"></div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-title">Uitgaven per dag (€)</div>
-          <div class="chart-desc">Hoeveel euro per dag is er uitgegeven aan Meta-advertenties. Zo zie je pieken rond campagnewijzigingen of seizoenseffecten.</div>
-          <canvas id="meta-spend-chart"></canvas>
-          <div class="chart-source">Bron: Meta Ads · geselecteerde periode</div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-title">Clicks en impressies per dag</div>
-          <div class="chart-desc">Clicks (linker as) zijn het aantal keren dat iemand op je advertentie klikte. Impressies (rechter as) zijn het totale aantal keren dat je advertentie getoond werd.</div>
-          <canvas id="meta-engagement-chart"></canvas>
-          <div class="chart-source">Bron: Meta Ads · geselecteerde periode</div>
-        </div>
-        <div class="section-heading">
-          <h2>Campagnes</h2>
-          <p>Gesorteerd op uitgaven. CTR (click-through rate) geeft aan welk percentage van de vertoningen leidde tot een klik.</p>
-        </div>
-        <div class="table-wrapper">
-          <table id="meta-table"><thead></thead><tbody></tbody></table>
-        </div>
+      <div class="page-header">
+        <h1>Meta Ads</h1>
+        <p>Betaalde advertenties via Facebook en Instagram.</p>
       </div>
+      <div class="page-toolbar hidden" id="toolbar-meta">
+        <button class="btn-sm" onclick="addWidget('meta')">+ Widget toevoegen</button>
+      </div>
+      <div id="widgets-meta" class="widgets-container" data-page="meta"></div>
     </div>
 
     <!-- ── GOOGLE ── -->
     <div id="page-google" class="page hidden">
-      <div id="google-content" class="hidden">
-        <div class="page-header">
-          <h1>Google Ads</h1>
-          <p>Betaalde zoekmachine-advertenties via Google. Hieronder zie je de totale prestaties, dagelijkse kostentrend en een uitsplitsing per campagne.</p>
-        </div>
-        <div class="platform-kpi-card">
-          <div class="pkpi-icon">
-            <svg width="40" height="40" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#4285f4"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="22" font-weight="700" font-family="sans-serif">G</text></svg>
-          </div>
-          <div class="pkpi-grid" id="google-kpis"></div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-title">Kosten per dag (€)</div>
-          <div class="chart-desc">Dagelijkse Google Ads-kosten in euro's. Grote schommelingen kunnen wijzen op budgetwijzigingen, campagnestarts of sterk variërend zoekvolume.</div>
-          <canvas id="google-spend-chart"></canvas>
-          <div class="chart-source">Bron: Google Ads · geselecteerde periode</div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-title">Clicks en impressies per dag</div>
-          <div class="chart-desc">Clicks (linker as) zijn het aantal keren dat iemand op een zoekadvertentie klikte. Impressies (rechter as) tonen hoe vaak je advertentie verscheen bij een zoekopdracht.</div>
-          <canvas id="google-engagement-chart"></canvas>
-          <div class="chart-source">Bron: Google Ads · geselecteerde periode</div>
-        </div>
-        <div class="section-heading">
-          <h2>Campagnes</h2>
-          <p>Gesorteerd op kosten. Een lage CPC wijst op efficiënte campagnes.</p>
-        </div>
-        <div class="table-wrapper">
-          <table id="google-table"><thead></thead><tbody></tbody></table>
-        </div>
+      <div class="page-header">
+        <h1>Google Ads</h1>
+        <p>Betaalde zoekmachine-advertenties via Google.</p>
       </div>
+      <div class="page-toolbar hidden" id="toolbar-google">
+        <button class="btn-sm" onclick="addWidget('google')">+ Widget toevoegen</button>
+      </div>
+      <div id="widgets-google" class="widgets-container" data-page="google"></div>
     </div>
 
     <!-- ── PINTEREST ── -->
     <div id="page-pinterest" class="page hidden">
-      <div id="pinterest-content" class="hidden">
-        <div class="page-header">
-          <h1>Pinterest Ads</h1>
-          <p>Betaalde Pinterest-advertenties (promoted pins). Hieronder zie je de totale prestaties, dagelijkse trends en een uitsplitsing per campagne.</p>
-        </div>
-        <div class="platform-kpi-card">
-          <div class="pkpi-icon">
-            <svg width="40" height="40" viewBox="0 0 40 40"><rect width="40" height="40" rx="10" fill="#e60023"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" fill="white" font-size="22" font-weight="700" font-family="sans-serif">P</text></svg>
-          </div>
-          <div class="pkpi-grid" id="pinterest-kpis"></div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-title">Uitgaven per dag (€)</div>
-          <div class="chart-desc">Dagelijkse Pinterest-advertentie-uitgaven. Pinterest werkt visueel en seizoensgebonden — pieken zijn vaak zichtbaar rond lifestyle-momenten.</div>
-          <canvas id="pinterest-spend-chart"></canvas>
-          <div class="chart-source">Bron: Pinterest Ads · geselecteerde periode</div>
-        </div>
-        <div class="chart-block">
-          <div class="chart-title">Clicks en impressies per dag</div>
-          <div class="chart-desc">Outbound clicks (linker as) zijn klikken naar je website. Impressies (rechter as) tonen hoe vaak je pin verscheen in een feed of zoekresultaat.</div>
-          <canvas id="pinterest-engagement-chart"></canvas>
-          <div class="chart-source">Bron: Pinterest Ads · geselecteerde periode</div>
-        </div>
-        <div class="section-heading">
-          <h2>Campagnes</h2>
-          <p>Gesorteerd op uitgaven. Pinterest is sterk in visuele inspiratie — hoge impressies bij lage CPC is een goed teken.</p>
-        </div>
-        <div class="table-wrapper">
-          <table id="pinterest-table"><thead></thead><tbody></tbody></table>
-        </div>
+      <div class="page-header">
+        <h1>Pinterest Ads</h1>
+        <p>Betaalde Pinterest-advertenties (promoted pins).</p>
       </div>
+      <div class="page-toolbar hidden" id="toolbar-pinterest">
+        <button class="btn-sm" onclick="addWidget('pinterest')">+ Widget toevoegen</button>
+      </div>
+      <div id="widgets-pinterest" class="widgets-container" data-page="pinterest"></div>
     </div>
 
   </main>
+</div>
+
+<!-- LAYOUT SAVE BAR — shown while in edit mode -->
+<div class="layout-save-bar hidden" id="layout-save-bar">
+  <span class="settings-save-status hidden" id="layout-save-status"></span>
+  <div class="layout-save-actions">
+    <button class="btn-sm" onclick="resetLayoutToDefault()">Terug naar standaard</button>
+    <button class="btn-primary" id="layout-save-btn" onclick="saveLayout()">Layout opslaan</button>
+  </div>
+</div>
+
+<!-- WIDGET EDITOR MODAL -->
+<div id="widget-editor-overlay" class="note-overlay hidden" onclick="closeWidgetEditor()">
+  <div class="note-modal widget-editor-modal" onclick="event.stopPropagation()">
+    <div class="note-modal-header">
+      <strong id="widget-editor-title">Widget toevoegen</strong>
+      <button class="note-close" onclick="closeWidgetEditor()">×</button>
+    </div>
+    <label class="settings-row">
+      <span class="settings-label">Type</span>
+      <select id="widget-type-select" onchange="onWidgetTypeChange()">
+        <option value="kpi">KPI-balk</option>
+        <option value="chart">Grafiek</option>
+        <option value="table">Campagnetabel</option>
+        <option value="yearly">Maandoverzicht (jaar)</option>
+      </select>
+    </label>
+    <label class="settings-row">
+      <span class="settings-label">Titel (optioneel)</span>
+      <input type="text" id="widget-title-input" class="settings-account-input" placeholder="Automatisch gegenereerd" />
+    </label>
+    <div id="widget-editor-fields"></div>
+    <div class="note-modal-footer">
+      <button class="btn-ghost" onclick="closeWidgetEditor()">Annuleren</button>
+      <button class="btn-primary" onclick="saveWidgetFromEditor()">Opslaan</button>
+    </div>
+  </div>
 </div>
 
 <!-- NOTE MODAL -->
