@@ -374,13 +374,13 @@ async function loadPinterest(client, dateRange) {
   return d.data?.rows || [];
 }
 
-// Separate yearly Pinterest query: advertiser-level (1 row/day instead of per campaign),
+// Separate yearly Pinterest query: account-level (1 row/day instead of per campaign),
 // so a full year stays well within limits.
 async function loadPinterestYearly(client, dateRange) {
   if (!client.pinterest) return [];
   const d = await apiPost('/api/query', {
     integration_id: 'pinterest_ads', connection_key: client.pinterest.connection_key,
-    account_id: client.pinterest.account_id, data_view: 'advertiser',
+    account_id: client.pinterest.account_id, data_view: 'account',
     settings: { click_window: '30', view_window: '1', engagement_window: '30', conversion_report_time: 'TIME_OF_AD_ACTION' },
     fields: ['DAY', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR'],
     date_range: dateRange, limit: 1000,
@@ -598,7 +598,7 @@ async function loadReport(forcedClientId) {
 
     const allResults = [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear];
     const allLabels  = ['Meta', 'Google', 'Pinterest', 'Meta (jaar)', 'Google (jaar)', 'Pinterest (jaar)'];
-    const errs = allResults.filter(r=>r.status==='rejected').map((r,i)=>allLabels[i]+': '+r.reason?.message);
+    const errs = allResults.map((r,i)=>r.status==='rejected'?allLabels[i]+': '+r.reason?.message:null).filter(Boolean);
     if (errs.length) showError(errs.join(' | '));
 
     const totalSpend  = metaRows.reduce((s,r)=>s+parseFloat(r.spend||0),0) + googleRows.reduce((s,r)=>s+micros(r['metrics.cost_micros']),0) + pintRows.reduce((s,r)=>s+parseFloat(r.SPEND_IN_DOLLAR||0),0);
