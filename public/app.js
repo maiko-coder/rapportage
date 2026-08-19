@@ -988,8 +988,20 @@ const ICON_CHECK = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" 
 
 function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', table: 'Tabel', yearly: 'Maandoverzicht', sheet: 'Gekoppeld sheet', demographics: 'Demografie' }[type] || type; }
 
-// ─── Demografie (Meta) ────────────────────────────────────────────────────────
-const DEMO_DIM_LABELS = { age: 'Leeftijd', gender: 'Geslacht', age_gender: 'Leeftijd + geslacht' };
+// ─── Demografie & plaatsing (Meta) ────────────────────────────────────────────
+// Elke uitsplitsing wordt via een eigen, losse query opgehaald (zie
+// renderWidgetDemographics) — Meta's Insights API staat namelijk niet toe om
+// demografie (leeftijd/geslacht) te combineren met platform/plaatsing/apparaat
+// in dezelfde aanvraag. Los opvragen werkt voor elke combinatie en levert per
+// aangevinkte optie een eigen taartdiagram op, naast elkaar in de widget.
+const DEMO_DIM_DEFS = [
+  { key: 'age',               label: 'Leeftijd',            fields: ['age'] },
+  { key: 'gender',             label: 'Geslacht',            fields: ['gender'] },
+  { key: 'age_gender',         label: 'Leeftijd + geslacht', fields: ['age', 'gender'] },
+  { key: 'publisher_platform', label: 'Platform',            fields: ['publisher_platform'] },
+  { key: 'platform_position',  label: 'Plaatsing',           fields: ['platform_position'] },
+  { key: 'device_platform',    label: 'Apparaat',            fields: ['device_platform'] },
+];
 const DEMO_METRIC_DEFS = [
   { key: 'spend',       label: 'Uitgaven',   unit: 'eur' },
   { key: 'clicks',      label: 'Clicks',     unit: 'count' },
@@ -1001,6 +1013,13 @@ function translateGender(g) {
   if (s === 'male')   return 'Man';
   if (!s || s === 'unknown') return 'Onbekend';
   return g;
+}
+// Compatibel met widgets van vóór de meerkeuze-uitbreiding, die nog een losse
+// `breakdownDim` (string) hadden i.p.v. `breakdownDims` (array).
+function widgetDemoDims(widget) {
+  if (Array.isArray(widget?.breakdownDims) && widget.breakdownDims.length) return widget.breakdownDims;
+  if (widget?.breakdownDim) return [widget.breakdownDim];
+  return ['age_gender'];
 }
 
 function availableSheets() { return (currentClientSettings?.sheets || []); }
@@ -1102,9 +1121,11 @@ function defaultWidgetTitle(widget) {
     return `Campagnes — ${PLATFORM_META[widget.platform]?.label || widget.platform}`;
   }
   if (widget.type === 'demographics') {
-    const dimLabel    = DEMO_DIM_LABELS[widget.breakdownDim] || DEMO_DIM_LABELS.age;
+    const dims        = widgetDemoDims(widget);
+    const dimLabels   = dims.map(k => DEMO_DIM_DEFS.find(d => d.key === k)?.label || k);
     const metricLabel = DEMO_METRIC_DEFS.find(m => m.key === widget.metric)?.label || 'Uitgaven';
-    return `${metricLabel} per ${dimLabel.toLowerCase()} (Meta)`;
+    if (dimLabels.length === 1) return `${metricLabel} per ${dimLabels[0].toLowerCase()} (Meta)`;
+    return `${metricLabel} — ${dimLabels.join(', ')} (Meta)`;
   }
   if (widget.type === 'sheet') {
     const sheet = availableSheets().find(s => s.id === widget.sheetLinkId);
@@ -1208,8 +1229,10 @@ async function renderWidgetSheet(widget) {
 
 // Demografie-widget (Meta): net als de sheet-widget wordt de data pas na het
 // renderen van de widget-shell opgehaald (los van de hoofd-Promise.allSettled
-// in loadReport), want dit is optioneel en gebruikt een extra breakdown-
-// dimensie (leeftijd/geslacht) die niet bij de dag-reeks van de andere widgets past.
+// in loadReport), want dit is optioneel. Voor elke aangevinkte uitsplitsing
+// (leeftijd, platform, plaatsing, ...) komt er een eigen taartdiagram, elk met
+// een eigen losse query — dat voorkomt de FB-beperking dat demografie niet
+// gecombineerd kan worden met platform/plaatsing/apparaat in dezelfde aanvraag.
 async function renderWidgetDemographics(widget) {
   const el = document.getElementById(`w-demo-${widget.id}`);
   if (!el) return;
@@ -1217,29 +1240,45 @@ async function renderWidgetDemographics(widget) {
     el.innerHTML = `<p class="widget-empty">Geen Meta-koppeling voor deze klant.</p>`;
     return;
   }
-  const dim    = widget.breakdownDim || 'age';
+  const dims   = widgetDemoDims(widget);
   const metric = widget.metric || 'spend';
-  try {
-    const dimFields = dim === 'age_gender' ? ['age', 'gender'] : [dim];
-    const d = await apiPost('/api/query', {
-      integration_id: 'facebook_ads', connection_key: currentClient.meta.connection_key, account_id: currentClient.meta.account_id,
-      settings: { attribution_window: 'ATTRIBUTION_MODEL_VIEW_CLICK###VIEW_ATTRIBUTION_WINDOW_1D###CLICK_ATTRIBUTION_WINDOW_7D' },
-      fields: [...dimFields, 'impressions', 'clicks', 'spend'],
-      date_range: getPeriodApiDateRange(), limit: 200,
-    });
-    const rows = d.data?.rows || [];
-    const grouped = groupDemographicsRows(rows, dim, metric);
-    if (!grouped.length) {
-      el.innerHTML = `<p class="widget-empty">Geen demografische data in de geselecteerde periode.</p>`;
-      return;
+  const unit   = DEMO_METRIC_DEFS.find(m => m.key === metric)?.unit || 'eur';
+
+  el.innerHTML = `<div class="demo-pie-grid">${dims.map(dim => `
+    <div class="demo-pie-item">
+      <div class="demo-pie-title">${escapeHtml(DEMO_DIM_DEFS.find(d => d.key === dim)?.label || dim)}</div>
+      <div id="w-demo-${widget.id}-${dim}" class="demo-pie-body"><p class="widget-empty">Laden…</p></div>
+    </div>`).join('')}</div>`;
+
+  const dateRange = getPeriodApiDateRange();
+  await Promise.all(dims.map(async dim => {
+    const target = document.getElementById(`w-demo-${widget.id}-${dim}`);
+    if (!target) return;
+    try {
+      const grouped = await fetchDemographicsBreakdown(currentClient, dim, metric, dateRange);
+      if (!grouped.length) {
+        target.innerHTML = `<p class="widget-empty">Geen data in de geselecteerde periode.</p>`;
+        return;
+      }
+      const canvasId = `w-demo-canvas-${widget.id}-${dim}`;
+      target.innerHTML = `<canvas id="${canvasId}"></canvas>`;
+      makePieChart(canvasId, grouped, unit);
+    } catch (err) {
+      target.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
     }
-    const canvasId = `w-demo-canvas-${widget.id}`;
-    el.innerHTML = `<canvas id="${canvasId}"></canvas>`;
-    const unit = DEMO_METRIC_DEFS.find(m => m.key === metric)?.unit || 'eur';
-    makePieChart(canvasId, grouped, unit);
-  } catch (err) {
-    el.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
-  }
+  }));
+}
+
+async function fetchDemographicsBreakdown(client, dim, metric, dateRange) {
+  const def = DEMO_DIM_DEFS.find(d => d.key === dim);
+  const dimFields = def?.fields || [dim];
+  const d = await apiPost('/api/query', {
+    integration_id: 'facebook_ads', connection_key: client.meta.connection_key, account_id: client.meta.account_id,
+    settings: { attribution_window: 'ATTRIBUTION_MODEL_VIEW_CLICK###VIEW_ATTRIBUTION_WINDOW_1D###CLICK_ATTRIBUTION_WINDOW_7D' },
+    fields: [...dimFields, 'impressions', 'clicks', 'spend'],
+    date_range: dateRange, limit: 200,
+  });
+  return groupDemographicsRows(d.data?.rows || [], dim, metric);
 }
 
 function groupDemographicsRows(rows, dim, metric) {
@@ -1248,7 +1287,11 @@ function groupDemographicsRows(rows, dim, metric) {
     let label;
     if (dim === 'age')         label = r.age || 'Onbekend';
     else if (dim === 'gender') label = translateGender(r.gender);
-    else                       label = `${r.age || 'Onbekend'} · ${translateGender(r.gender)}`;
+    else if (dim === 'age_gender') label = `${r.age || 'Onbekend'} · ${translateGender(r.gender)}`;
+    else {
+      const def = DEMO_DIM_DEFS.find(d => d.key === dim);
+      label = r[def?.fields[0] || dim] || 'Onbekend';
+    }
     by[label] = (by[label] || 0) + parseFloat(r[metric] || 0);
   });
   return Object.entries(by)
@@ -1269,11 +1312,11 @@ function makePieChart(canvasId, data, unit) {
       datasets: [{ data: data.map(d => d.value), backgroundColor: CHART_PALETTE, borderWidth: 0, borderRadius: 2 }],
     },
     options: {
-      responsive: true, maintainAspectRatio: true,
+      responsive: true, maintainAspectRatio: true, aspectRatio: 1.25,
       plugins: {
         legend: {
-          position: 'right',
-          labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7, font: { size: 11.5, family: "'Inter', sans-serif", weight: '500' }, color: '#1c1b1a', padding: 12 },
+          position: 'bottom',
+          labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7, font: { size: 10.5, family: "'Inter', sans-serif", weight: '500' }, color: '#1c1b1a', padding: 8 },
         },
         tooltip: {
           backgroundColor: '#1c1b1a', titleFont: { size: 12, family: "'Inter', sans-serif", weight: '600' }, bodyFont: { size: 12, family: "'Inter', sans-serif" },
@@ -1508,16 +1551,17 @@ function renderWidgetEditorFields(type, widget) {
   }
   if (type === 'demographics') {
     if (!currentClient?.meta) { el.innerHTML = `<p class="widget-editor-hint">Deze klant heeft geen Meta-koppeling.</p>`; return; }
-    const dim    = widget?.breakdownDim || 'age';
+    const dims   = new Set(widgetDemoDims(widget || {}));
     const metric = widget?.metric || 'spend';
     el.innerHTML = `
-      <label class="settings-row"><span class="settings-label">Uitsplitsen op</span>
-        <select id="widget-demo-dim-select">${Object.entries(DEMO_DIM_LABELS).map(([k, l]) => `<option value="${k}" ${dim===k?'selected':''}>${l}</option>`).join('')}</select>
-      </label>
-      <label class="settings-row"><span class="settings-label">Metric</span>
+      <div class="settings-label" style="margin-bottom:6px;">Uitsplitsen op (kies er één of meer)</div>
+      <div class="metric-checklist">
+        ${DEMO_DIM_DEFS.map(d => `<label class="metric-check"><input type="checkbox" class="widget-demo-dim-check" value="${d.key}" ${dims.has(d.key)?'checked':''}/> ${escapeHtml(d.label)}</label>`).join('')}
+      </div>
+      <label class="settings-row" style="margin-top:12px;"><span class="settings-label">Metric</span>
         <select id="widget-demo-metric-select">${DEMO_METRIC_DEFS.map(m => `<option value="${m.key}" ${metric===m.key?'selected':''}>${m.label}</option>`).join('')}</select>
       </label>
-      <p class="widget-editor-hint">Toont een taartdiagram van Meta-advertentiedata, uitgesplitst per leeftijd en/of geslacht.</p>`;
+      <p class="widget-editor-hint">Voor elke aangevinkte uitsplitsing komt er een eigen taartdiagram naast elkaar te staan.</p>`;
     return;
   }
   // kpi / chart: metric checklist grouped by platform, plus een dropdown per
@@ -1614,15 +1658,16 @@ function saveWidgetFromEditor() {
   // Velden die alleen bij één widgettype horen — bij elk type opnieuw opbouwen
   // voorkomt dat oude instellingen van een eerder gekozen type blijven hangen.
   delete widget.metrics; delete widget.platform; delete widget.sheetLinkId; delete widget.compareYoy;
-  delete widget.tableColumns; delete widget.breakdownDim; delete widget.metric;
+  delete widget.tableColumns; delete widget.breakdownDim; delete widget.breakdownDims; delete widget.metric;
 
   if (type === 'table') {
     widget.platform = document.getElementById('widget-platform-select')?.value || availablePlatforms()[0] || 'meta';
     const chosenCols = [...document.querySelectorAll('.widget-table-col-check:checked')].map(c => c.value);
     if (widget.platform !== 'analytics' && chosenCols.length) widget.tableColumns = chosenCols;
   } else if (type === 'demographics') {
-    widget.breakdownDim = document.getElementById('widget-demo-dim-select')?.value || 'age';
-    widget.metric       = document.getElementById('widget-demo-metric-select')?.value || 'spend';
+    const chosenDims = [...document.querySelectorAll('.widget-demo-dim-check:checked')].map(c => c.value);
+    widget.breakdownDims = chosenDims.length ? chosenDims : ['age_gender'];
+    widget.metric        = document.getElementById('widget-demo-metric-select')?.value || 'spend';
   } else if (type === 'yearly') {
     // geen extra instellingen
   } else if (type === 'sheet') {
@@ -1729,7 +1774,7 @@ const DEFAULT_LAYOUT = {
     { id: 'def-meta-spend', type: 'chart', title: 'Uitgaven per dag (€)', metrics: ['meta.spend'] },
     { id: 'def-meta-eng',   type: 'chart', title: 'Clicks en impressies per dag', metrics: ['meta.clicks', 'meta.impressions'] },
     { id: 'def-meta-table', type: 'table', platform: 'meta' },
-    { id: 'def-meta-demo',  type: 'demographics', breakdownDim: 'age_gender', metric: 'spend' },
+    { id: 'def-meta-demo',  type: 'demographics', breakdownDims: ['age_gender'], metric: 'spend' },
   ],
   google: [
     { id: 'def-google-kpi',   type: 'kpi', title: 'KPI-overzicht', metrics: ['google.impressions', 'google.clicks', 'google.ctr', 'google.spend', 'google.cpc', 'google.cpm'] },
