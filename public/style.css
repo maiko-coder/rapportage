@@ -1097,6 +1097,10 @@ tbody tr.note-row td {
 .sheet-resolved-title { font-size: 12px; color: var(--text-muted); }
 .sheet-add-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
+.sheet-filter-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sheet-filter-row select { flex: 1 1 auto; min-width: 120px; }
+.sheet-filter-row input[type=text] { flex: 1 1 100px; min-width: 100px; }
+
 .promo-list { display: flex; flex-direction: column; gap: 10px; }
 .promo-row {
   border: 1px solid var(--border); border-radius: var(--radius-sm);

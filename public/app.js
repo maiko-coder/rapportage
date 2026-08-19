@@ -775,15 +775,15 @@ function onWidgetSheetChange() {
   loadSheetColumnOptions(linkId, null);
 }
 
-// Herbouwt het filter op kolom + waarde als de gekozen kolom wijzigt, met
-// behoud van de reeds aangevinkte kolommen en de "verberg lege rijen" stand.
-function onWidgetSheetFilterColChange() {
-  const linkId    = document.getElementById('widget-sheet-select')?.value;
-  const filterCol = document.getElementById('widget-sheet-filtercol')?.value || '';
-  const hiddenCols = [...document.querySelectorAll('.sheet-col-check')].filter(c => !c.checked).map(c => c.value);
-  const hideEmpty  = !!document.getElementById('widget-sheet-hideempty')?.checked;
-  loadSheetColumnOptions(linkId, { sheetHiddenCols: hiddenCols, sheetFilterCol: filterCol, sheetFilterValue: '', sheetHideEmptyRows: hideEmpty });
-}
+const SHEET_FILTER_OPS = [
+  { value: 'eq',       label: 'is gelijk aan' },
+  { value: 'neq',      label: 'is niet gelijk aan' },
+  { value: 'gt',       label: 'groter dan' },
+  { value: 'gte',      label: 'groter dan of gelijk aan' },
+  { value: 'lt',       label: 'kleiner dan' },
+  { value: 'lte',      label: 'kleiner dan of gelijk aan' },
+  { value: 'contains', label: 'bevat tekst' },
+];
 
 async function loadSheetColumnOptions(linkId, widget) {
   const wrap = document.getElementById('widget-sheet-columns-wrap');
@@ -797,12 +797,9 @@ async function loadSheetColumnOptions(linkId, widget) {
     }
     const hidden     = new Set(widget?.sheetHiddenCols || []);
     const filterCol  = widget?.sheetFilterCol || '';
+    const filterOp   = widget?.sheetFilterOp || 'eq';
     const filterVal  = widget?.sheetFilterValue || '';
     const hideEmpty  = !!widget?.sheetHideEmptyRows;
-    const filterColIdx = headers.indexOf(filterCol);
-    const distinctVals = filterColIdx >= 0
-      ? [...new Set(preview.rows.map(r => String(r[filterColIdx] ?? '').trim()).filter(Boolean))]
-      : [];
 
     wrap.innerHTML = `
       <div class="settings-row">
@@ -811,28 +808,25 @@ async function loadSheetColumnOptions(linkId, widget) {
           ${headers.map(h => `<label class="metric-check"><input type="checkbox" class="sheet-col-check" value="${escapeHtml(h)}" ${hidden.has(h) ? '' : 'checked'}/> ${escapeHtml(h || '(naamloos)')}</label>`).join('')}
         </div>
       </div>
-      <label class="settings-row">
-        <span class="settings-label">Filter op kolom</span>
-        <select id="widget-sheet-filtercol" onchange="onWidgetSheetFilterColChange()">
-          <option value="">Geen filter (alle rijen)</option>
-          ${headers.map(h => `<option value="${escapeHtml(h)}" ${filterCol===h?'selected':''}>${escapeHtml(h)}</option>`).join('')}
-        </select>
-      </label>
-      <div id="widget-sheet-filterval-wrap">
-        ${filterColIdx >= 0 ? `
-        <label class="settings-row">
-          <span class="settings-label">Waarde</span>
-          <select id="widget-sheet-filterval">
-            <option value="">Alle</option>
-            ${distinctVals.map(v => `<option value="${escapeHtml(v)}" ${filterVal===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
+      <div class="settings-row">
+        <span class="settings-label">Filter op rijen</span>
+        <div class="sheet-filter-row">
+          <select id="widget-sheet-filtercol">
+            <option value="">Geen filter (alle rijen)</option>
+            ${headers.map(h => `<option value="${escapeHtml(h)}" ${filterCol===h?'selected':''}>${escapeHtml(h)}</option>`).join('')}
           </select>
-        </label>` : ''}
+          <select id="widget-sheet-filterop">
+            ${SHEET_FILTER_OPS.map(o => `<option value="${o.value}" ${filterOp===o.value?'selected':''}>${o.label}</option>`).join('')}
+          </select>
+          <input type="text" id="widget-sheet-filterval" class="settings-account-input" placeholder="bv. 2026" value="${escapeHtml(filterVal)}" />
+        </div>
+        <p class="widget-editor-hint">Getallen (zoals jaartallen) worden numeriek vergeleken; tekst wordt alfabetisch vergeleken. Laat de waarde leeg om het filter uit te zetten.</p>
       </div>
       <label class="settings-toggle-label">
         <input type="checkbox" id="widget-sheet-hideempty" ${hideEmpty ? 'checked' : ''}/>
         Verberg rijen zonder data (bv. toekomstige maanden)
       </label>
-      <p class="widget-editor-hint">Tip: voor "2026 tm nu" kies je kolom + waarde 2026 én vink je "verberg rijen zonder data" aan — nog niet ingevulde maanden verdwijnen dan automatisch.</p>`;
+      <p class="widget-editor-hint">Tip: voor "2026 tm nu" filter je op de jaar/datumkolom met "groter dan of gelijk aan" en waarde 2026, en vink je "verberg rijen zonder data" aan.</p>`;
   } catch (err) {
     wrap.innerHTML = `<p class="widget-editor-hint" style="color:var(--danger)">${escapeHtml(err.message)}</p>`;
   }
@@ -911,20 +905,22 @@ async function renderWidgetSheet(widget) {
   }
 }
 
-// Past kolomselectie ("Zichtbare kolommen"), rijfilter ("Filter op kolom" +
-// waarde) en het verbergen van lege rijen toe zoals ingesteld in de
-// widget-editor. Werkt op de ruwe headers/rows zoals ze uit het sheet komen.
+// Past kolomselectie ("Zichtbare kolommen"), rijfilter ("Filter op rijen":
+// kolom + vergelijking + waarde) en het verbergen van lege rijen toe zoals
+// ingesteld in de widget-editor. Werkt op de ruwe headers/rows zoals ze uit
+// het sheet komen.
 function applySheetWidgetFilters(widget, headers, rows) {
   const hiddenSet   = new Set(widget.sheetHiddenCols || []);
   const visibleIdx  = headers.map((_, i) => i).filter(i => !hiddenSet.has(headers[i]));
 
   let filteredRows = rows;
   const filterCol = widget.sheetFilterCol;
+  const filterOp  = widget.sheetFilterOp || 'eq';
   const filterVal = widget.sheetFilterValue;
-  if (filterCol) {
+  if (filterCol && filterVal !== undefined && filterVal !== '') {
     const colIdx = headers.indexOf(filterCol);
-    if (colIdx >= 0 && filterVal) {
-      filteredRows = filteredRows.filter(r => String(r[colIdx] ?? '').trim() === filterVal);
+    if (colIdx >= 0) {
+      filteredRows = filteredRows.filter(r => compareSheetCell(r[colIdx], filterOp, filterVal));
     }
   }
   if (widget.sheetHideEmptyRows) {
@@ -937,6 +933,31 @@ function applySheetWidgetFilters(widget, headers, rows) {
     headers: visibleIdx.map(i => headers[i]),
     rows: filteredRows.map(r => visibleIdx.map(i => r[i])),
   };
+}
+
+// Vergelijkt een sheet-celwaarde met de ingestelde filterwaarde. Als beide
+// er numeriek uitzien (bv. jaartallen "2026", of bedragen met een komma als
+// decimaalteken) wordt numeriek vergeleken, anders tekstueel/alfabetisch.
+function compareSheetCell(cell, op, filterVal) {
+  const cellStr   = String(cell ?? '').trim();
+  const filterStr = String(filterVal ?? '').trim();
+  const numPattern = /^-?\d+([.,]\d+)?$/;
+  const bothNumeric = numPattern.test(cellStr) && numPattern.test(filterStr);
+  const cellNum   = bothNumeric ? parseFloat(cellStr.replace(',', '.')) : null;
+  const filterNum = bothNumeric ? parseFloat(filterStr.replace(',', '.')) : null;
+  const cellCmp   = bothNumeric ? cellNum : cellStr.toLowerCase();
+  const filterCmp = bothNumeric ? filterNum : filterStr.toLowerCase();
+
+  switch (op) {
+    case 'eq':       return cellCmp === filterCmp;
+    case 'neq':      return cellCmp !== filterCmp;
+    case 'gt':       return cellCmp > filterCmp;
+    case 'gte':      return cellCmp >= filterCmp;
+    case 'lt':       return cellCmp < filterCmp;
+    case 'lte':      return cellCmp <= filterCmp;
+    case 'contains': return cellStr.toLowerCase().includes(filterStr.toLowerCase());
+    default:         return true;
+  }
 }
 
 function renderSheetTableHtml(headers, rows) {
@@ -1112,7 +1133,8 @@ function saveWidgetFromEditor() {
     const hiddenCols = [...document.querySelectorAll('.sheet-col-check')].filter(c => !c.checked).map(c => c.value);
     widget.sheetHiddenCols    = hiddenCols;
     widget.sheetFilterCol     = document.getElementById('widget-sheet-filtercol')?.value || '';
-    widget.sheetFilterValue   = document.getElementById('widget-sheet-filterval')?.value || '';
+    widget.sheetFilterOp      = document.getElementById('widget-sheet-filterop')?.value || 'eq';
+    widget.sheetFilterValue   = document.getElementById('widget-sheet-filterval')?.value?.trim() || '';
     widget.sheetHideEmptyRows = !!document.getElementById('widget-sheet-hideempty')?.checked;
     delete widget.metrics; delete widget.platform;
   } else {
