@@ -84,7 +84,7 @@
   <nav class="sidebar">
     <div class="nav-section">Weergave</div>
     <button class="nav-item active" onclick="showPage('samenvatting', this)">
-      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h6v6H3zM11 3h6v6h-6zM3 11h6v6H3zM11 11h6v6h-6z"/></svg>
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="6.5" height="6.5" rx="1.5"/><rect x="11" y="2.5" width="6.5" height="6.5" rx="1.5"/><rect x="2.5" y="11" width="6.5" height="6.5" rx="1.5"/><rect x="11" y="11" width="6.5" height="6.5" rx="1.5"/></svg>
       Samenvatting
     </button>
     <div class="nav-section nav-section-platforms">Platformen</div>
@@ -104,16 +104,16 @@
     <!-- Rapport aanpassen — marketeer-only, hidden in CLIENT_MODE -->
     <div class="nav-spacer"></div>
     <button class="nav-item" id="edit-mode-btn" onclick="toggleEditMode()">
-      <svg viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.35 3.15a1.9 1.9 0 012.5 2.85L7.5 15.35 3.5 16.5l1.15-4L14.35 3.15z"/></svg>
       Rapport aanpassen
     </button>
     <div class="nav-divider-line" id="settings-nav-divider"></div>
     <a href="/settings" class="nav-item nav-item-link" id="settings-nav-link">
-      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.4"/><path d="M10 3.2v1.6M10 15.2v1.6M16.8 10h-1.6M4.8 10H3.2M14.6 5.4l-1.13 1.13M6.53 13.47L5.4 14.6M14.6 14.6l-1.13-1.13M6.53 6.53L5.4 5.4"/></svg>
       Instellingen
     </a>
     <button class="nav-item" id="logout-nav-btn" onclick="doLogout()">
-      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h7a1 1 0 000-2H4V5h6a1 1 0 000-2H3zm11.293 4.293a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 01-1.414-1.414L15.586 12H9a1 1 0 010-2h6.586l-1.293-1.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 17H4.5a1 1 0 01-1-1V4a1 1 0 011-1h4M13.5 14l3.5-4-3.5-4M17 10H7.5"/></svg>
       Uitloggen
     </button>
   </nav>
@@ -131,7 +131,7 @@
         <p id="kpi-sub"></p>
       </div>
       <div class="page-toolbar hidden" id="toolbar-samenvatting">
-        <button class="btn-sm" onclick="addWidget('samenvatting')">+ Widget toevoegen</button>
+        <button class="btn-sm" onclick="addWidget('samenvatting')"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" style="margin-right:5px;vertical-align:-1px"><path d="M7 1.5v11M1.5 7h11"/></svg>Widget toevoegen</button>
       </div>
       <div id="widgets-samenvatting" class="widgets-container" data-page="samenvatting"></div>
     </div>
@@ -143,7 +143,7 @@
         <p>Betaalde advertenties via Facebook en Instagram.</p>
       </div>
       <div class="page-toolbar hidden" id="toolbar-meta">
-        <button class="btn-sm" onclick="addWidget('meta')">+ Widget toevoegen</button>
+        <button class="btn-sm" onclick="addWidget('meta')"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" style="margin-right:5px;vertical-align:-1px"><path d="M7 1.5v11M1.5 7h11"/></svg>Widget toevoegen</button>
       </div>
       <div id="widgets-meta" class="widgets-container" data-page="meta"></div>
     </div>
@@ -155,7 +155,7 @@
         <p>Betaalde zoekmachine-advertenties via Google.</p>
       </div>
       <div class="page-toolbar hidden" id="toolbar-google">
-        <button class="btn-sm" onclick="addWidget('google')">+ Widget toevoegen</button>
+        <button class="btn-sm" onclick="addWidget('google')"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" style="margin-right:5px;vertical-align:-1px"><path d="M7 1.5v11M1.5 7h11"/></svg>Widget toevoegen</button>
       </div>
       <div id="widgets-google" class="widgets-container" data-page="google"></div>
     </div>
@@ -167,7 +167,7 @@
         <p>Betaalde Pinterest-advertenties (promoted pins).</p>
       </div>
       <div class="page-toolbar hidden" id="toolbar-pinterest">
-        <button class="btn-sm" onclick="addWidget('pinterest')">+ Widget toevoegen</button>
+        <button class="btn-sm" onclick="addWidget('pinterest')"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" style="margin-right:5px;vertical-align:-1px"><path d="M7 1.5v11M1.5 7h11"/></svg>Widget toevoegen</button>
       </div>
       <div id="widgets-pinterest" class="widgets-container" data-page="pinterest"></div>
     </div>
@@ -189,7 +189,7 @@
   <div class="note-modal widget-editor-modal" onclick="event.stopPropagation()">
     <div class="note-modal-header">
       <strong id="widget-editor-title">Widget toevoegen</strong>
-      <button class="note-close" onclick="closeWidgetEditor()">×</button>
+      <button class="note-close" onclick="closeWidgetEditor()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l10 10M12 2L2 12"/></svg></button>
     </div>
     <label class="settings-row">
       <span class="settings-label">Type</span>
@@ -217,7 +217,7 @@
   <div class="note-modal" onclick="event.stopPropagation()">
     <div class="note-modal-header">
       <strong id="note-modal-title">Notitie</strong>
-      <button class="note-close" onclick="closeNoteModal()">×</button>
+      <button class="note-close" onclick="closeNoteModal()"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l10 10M12 2L2 12"/></svg></button>
     </div>
     <textarea id="note-input" rows="4" placeholder="Schrijf een notitie voor deze maand…"></textarea>
     <div class="note-modal-footer">

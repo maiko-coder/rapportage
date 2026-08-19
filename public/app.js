@@ -312,14 +312,57 @@ async function apiPost(path, body) {
 // ─── Chart helpers ────────────────────────────────────────────────────────────
 function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
 
+const CHART_TEXT_MUTED = '#918e88';
+const CHART_GRID = 'rgba(30, 25, 20, 0.06)';
+
 const CHART_DEFAULTS = {
   responsive: true, maintainAspectRatio: true,
   interaction: { mode: 'index', intersect: false },
-  plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 12 } } },
+  elements: {
+    line: { borderWidth: 2.25, tension: 0.35 },
+    point: { radius: 0, hoverRadius: 4.5, hoverBorderWidth: 2, hoverBackgroundColor: '#fff' },
+  },
+  plugins: {
+    legend: {
+      position: 'bottom',
+      labels: {
+        usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7,
+        font: { size: 11.5, family: "'Inter', sans-serif", weight: '500' },
+        color: '#1c1b1a', padding: 18,
+      },
+    },
+    tooltip: {
+      backgroundColor: '#1c1b1a',
+      titleFont: { size: 12, family: "'Inter', sans-serif", weight: '600' },
+      bodyFont: { size: 12, family: "'Inter', sans-serif" },
+      padding: 10,
+      cornerRadius: 8,
+      boxPadding: 4,
+      usePointStyle: true,
+      displayColors: true,
+      borderColor: 'rgba(255,255,255,0.08)',
+      borderWidth: 1,
+    },
+  },
   scales: {
-    x:  { ticks: { maxTicksLimit: 10, font: { size: 11 } }, grid: { display: false } },
-    y:  { ticks: { font: { size: 11 } }, grid: { color: '#f0f0f0' }, beginAtZero: true },
-    y1: { position: 'right', ticks: { font: { size: 11 } }, grid: { display: false }, beginAtZero: true },
+    x: {
+      ticks: { maxTicksLimit: 10, font: { size: 11, family: "'Inter', sans-serif" }, color: CHART_TEXT_MUTED },
+      grid: { display: false },
+      border: { display: false },
+    },
+    y: {
+      ticks: { font: { size: 11, family: "'Inter', sans-serif" }, color: CHART_TEXT_MUTED, padding: 6 },
+      grid: { color: CHART_GRID },
+      border: { display: false },
+      beginAtZero: true,
+    },
+    y1: {
+      position: 'right',
+      ticks: { font: { size: 11, family: "'Inter', sans-serif" }, color: CHART_TEXT_MUTED, padding: 6 },
+      grid: { display: false },
+      border: { display: false },
+      beginAtZero: true,
+    },
   },
 };
 
@@ -330,7 +373,7 @@ function makeChart(id, labels, datasets, type = 'line') {
   charts[id] = new Chart(ctx, { type, data: { labels, datasets }, options: JSON.parse(JSON.stringify(CHART_DEFAULTS)) });
 }
 
-const CHART_PALETTE = ['#f97316', '#3b82f6', '#94a3b8', '#10b981', '#a855f7', '#ef4444', '#0ea5e9', '#eab308'];
+const CHART_PALETTE = ['#f97316', '#6366f1', '#14b8a6', '#f43f5e', '#8b5cf6', '#0ea5e9', '#eab308', '#71717a'];
 
 // ─── Data queries ─────────────────────────────────────────────────────────────
 async function loadMeta(client, dateRange) {
@@ -569,6 +612,11 @@ function renderYearlyBody(widgetId, rows) {
 // ═══ Widget engine ═════════════════════════════════════════════════════════
 const PAGE_KEYS = ['samenvatting', 'meta', 'google', 'pinterest'];
 
+const ICON_GRIP = `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><circle cx="4" cy="3" r="1.15"/><circle cx="10" cy="3" r="1.15"/><circle cx="4" cy="7" r="1.15"/><circle cx="10" cy="7" r="1.15"/><circle cx="4" cy="11" r="1.15"/><circle cx="10" cy="11" r="1.15"/></svg>`;
+const ICON_PENCIL = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5a1.5 1.5 0 012.12 2.12L5 13.25 2 14l.75-3L11.5 2.5z"/></svg>`;
+const ICON_TRASH = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M12.5 4.5l-.6 8.4a1.5 1.5 0 01-1.5 1.4h-4.8a1.5 1.5 0 01-1.5-1.4l-.6-8.4"/></svg>`;
+const ICON_PLUS = `<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 1.5v11M1.5 7h11"/></svg>`;
+
 function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', table: 'Campagnetabel', yearly: 'Maandoverzicht' }[type] || type; }
 
 function defaultWidgetTitle(widget) {
@@ -637,11 +685,11 @@ function buildWidgetElement(widget, ctx, pageKey) {
   const showEditBtn = widget.type !== 'yearly';
   wrap.innerHTML = `
     <div class="widget-header">
-      <span class="widget-drag-handle edit-only" title="Verplaatsen">⠿⠿</span>
+      <span class="widget-drag-handle edit-only" title="Verplaatsen">${ICON_GRIP}</span>
       <span class="widget-title">${escapeHtml(widget.title || defaultWidgetTitle(widget))}</span>
       <span class="widget-toolbar-actions edit-only">
-        ${showEditBtn ? `<button class="widget-icon-btn" onclick="openWidgetEditor('${pageKey}','${widget.id}')" title="Bewerken">✎</button>` : ''}
-        <button class="widget-icon-btn widget-icon-danger" onclick="removeWidget('${pageKey}','${widget.id}')" title="Verwijderen">×</button>
+        ${showEditBtn ? `<button class="widget-icon-btn" onclick="openWidgetEditor('${pageKey}','${widget.id}')" title="Bewerken">${ICON_PENCIL}</button>` : ''}
+        <button class="widget-icon-btn widget-icon-danger" onclick="removeWidget('${pageKey}','${widget.id}')" title="Verwijderen">${ICON_TRASH}</button>
       </span>
     </div>
     <div class="widget-body">${bodyHtml}</div>
