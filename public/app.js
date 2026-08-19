@@ -297,6 +297,21 @@ function monthLabel(yyyymm) {
 
 function showError(msg) { const el = document.getElementById('error-banner'); el.textContent = msg; el.classList.remove('hidden'); }
 function clearError()   { document.getElementById('error-banner').classList.add('hidden'); }
+
+let toastTimer = null;
+function showToast(msg) {
+  let el = document.getElementById('app-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'app-toast';
+    el.className = 'app-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('visible'), 2600);
+}
 function setLoading(on) { document.getElementById('loading').classList.toggle('hidden', !on); }
 function show(id) { document.getElementById(id)?.classList.remove('hidden'); }
 function hide(id) { document.getElementById(id)?.classList.add('hidden'); }
@@ -881,13 +896,15 @@ async function saveLayout() {
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'Opslaan mislukt');
     if (currentClientSettings) currentClientSettings.reportLayout = currentLayout;
-    if (status) { status.textContent = 'Opgeslagen ✓'; status.className = 'settings-save-status success'; setTimeout(() => status.classList.add('hidden'), 2500); }
+    if (status) { status.textContent = ''; status.className = 'settings-save-status'; }
+    if (btn) btn.disabled = false;
+    setEditMode(false);
+    showToast('Layout opgeslagen ✓');
+    return;
   } catch (err) {
     if (status) { status.textContent = 'Fout: ' + err.message; status.className = 'settings-save-status error'; }
-  } finally {
-    if (btn) btn.disabled = false;
-    if (status) status.classList.remove('hidden');
   }
+  if (btn) btn.disabled = false;
 }
 
 // ─── Default layout (matches the original fixed report design) ───────────────

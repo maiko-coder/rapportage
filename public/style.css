@@ -742,6 +742,29 @@ tbody tr.note-row td {
 }
 .btn-ghost:hover { background: var(--danger-light); border-color: transparent; }
 
+/* ── TOAST ──────────────────────────────────── */
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translate(-50%, 12px);
+  background: var(--text);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 20px;
+  border-radius: 999px;
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t), transform var(--t);
+  z-index: 600;
+}
+.app-toast.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 /* ── NAV SPACER / DIVIDER ───────────────────── */
 .nav-spacer { flex: 1; }
 .nav-divider-line {
