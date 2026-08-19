@@ -581,6 +581,20 @@ async function loadAnalytics(client, dateRange) {
   return d.data?.rows || [];
 }
 
+// Losse (niet per dag opgesplitste) query voor de best verkochte producten in de
+// geselecteerde periode — gebaseerd op GA4's e-commerce item-dimensies. Alleen
+// relevant voor klanten met een webshop; levert gewoon een lege lijst op als er
+// geen item-data in het GA4-property staat.
+async function loadAnalyticsProducts(client, dateRange) {
+  if (!client.analytics) return [];
+  const d = await apiPost('/api/query', {
+    integration_id: 'ga4', connection_key: client.analytics.connection_key, account_id: client.analytics.account_id,
+    fields: ['itemName', 'itemsPurchased', 'itemRevenue'],
+    date_range: dateRange, limit: 100,
+  });
+  return d.data?.rows || [];
+}
+
 // GA4-datums komen bij Google standaard binnen als "YYYYMMDD"; normaliseer naar
 // YYYY-MM-DD zodat ze aansluiten bij de dagsleutels van de andere platformen.
 function normalizeGa4Date(v) {
@@ -807,30 +821,91 @@ function getMetric(id) { return METRICS.find(m => m.id === id); }
 function unitFamily(unit) { return (unit === 'eur' || unit === 'eur2') ? 'money' : 'other'; }
 
 // ─── Campaign breakdown (per platform, for table widgets) ────────────────────
+// Hergebruikt dezelfde addMetaRow/addGoogleRow/addPinterestRow-optellers als de
+// KPI/grafiek-totalen, zodat elke campagne dezelfde velden krijgt (spend, clicks,
+// conversies, bereik, ...) — dat maakt het mogelijk om in de tabelwidget vrij te
+// kiezen welke kolommen getoond worden (zie TABLE_COLUMN_DEFS hieronder).
 function buildCampaignBreakdown(platform, rows) {
-  const byCamp = {};
-  const add = (name, impressions, clicks, spend) => {
-    if (!byCamp[name]) byCamp[name] = { name, impressions: 0, clicks: 0, spend: 0 };
-    byCamp[name].impressions += impressions; byCamp[name].clicks += clicks; byCamp[name].spend += spend;
+  const addRow  = platform === 'meta' ? addMetaRow : platform === 'google' ? addGoogleRow : addPinterestRow;
+  const nameOf  = r => {
+    if (platform === 'meta')   return r.campaign_name || '(onbekend)';
+    if (platform === 'google') return r['campaign.name'] || '(onbekend)';
+    return r.CAMPAIGN_NAME || '(onbekend)';
   };
-  if (platform === 'meta')      rows.forEach(r => add(r.campaign_name || '(onbekend)', parseFloat(r.impressions || 0), parseFloat(r.clicks || 0), parseFloat(r.spend || 0)));
-  if (platform === 'google')    rows.forEach(r => add(r['campaign.name'] || '(onbekend)', parseFloat(r['metrics.impressions'] || 0), parseFloat(r['metrics.clicks'] || 0), micros(r['metrics.cost_micros'])));
-  if (platform === 'pinterest') rows.forEach(r => add(r.CAMPAIGN_NAME || '(onbekend)', parseFloat(r.IMPRESSION_1 || 0), parseFloat(r.OUTBOUND_CLICK_1 || 0), parseFloat(r.SPEND_IN_DOLLAR || 0)));
+  const byCamp = {};
+  rows.forEach(r => {
+    const name = nameOf(r);
+    if (!byCamp[name]) byCamp[name] = { name, ...emptyPlatformTotals() };
+    addRow(byCamp[name], r);
+  });
   return Object.values(byCamp)
-    .map(v => ({ ...v, ctr: v.impressions > 0 ? v.clicks / v.impressions * 100 : 0, cpc: v.clicks > 0 ? v.spend / v.clicks : 0 }))
+    .map(v => ({
+      ...v,
+      ctr: v.impressions > 0 ? v.clicks / v.impressions * 100 : null,
+      cpc: v.clicks > 0 ? v.spend / v.clicks : null,
+      cpm: v.impressions > 0 ? v.spend / v.impressions * 1000 : null,
+      roas: v.spend > 0 ? v.conversionsValue / v.spend : null,
+      cpa: v.conversions > 0 ? v.spend / v.conversions : null,
+    }))
     .sort((a, b) => b.spend - a.spend);
 }
 
-function tableColumnsFor(platform) {
+// Kolomcatalogus voor campagnetabellen: de eerste 5 staan standaard aan (het
+// oude, vaste gedrag), de rest kan de marketeer per widget aanzetten via de
+// widget-editor. "spend" heet bij Google "Kosten" i.p.v. "Uitgaven".
+function tableColumnDefsFor(platform) {
   const spendLabel = platform === 'google' ? 'Kosten' : 'Uitgaven';
-  return [
-    { key: 'name', label: 'Campagne' },
-    { label: 'Impressies', cls: 'num', render: r => fmt(r.impressions) },
-    { label: 'Clicks',     cls: 'num', render: r => fmt(r.clicks) },
-    { label: 'CTR',        cls: 'num', render: r => fmt(r.ctr, 'pct') },
-    { label: spendLabel,   cls: 'num', render: r => fmt(r.spend, 'eur') },
-    { label: 'CPC',        cls: 'num', render: r => r.clicks > 0 ? fmt(r.cpc, 'eur2') : '—' },
+  const defs = [
+    { key: 'impressions',      label: 'Impressies',      unit: 'count' },
+    { key: 'clicks',           label: 'Clicks',          unit: 'count' },
+    { key: 'ctr',              label: 'CTR',             unit: 'pct' },
+    { key: 'spend',            label: spendLabel,        unit: 'eur' },
+    { key: 'cpc',              label: 'CPC',             unit: 'eur2' },
+    { key: 'cpm',              label: 'CPM',             unit: 'eur2' },
+    { key: 'conversions',      label: 'Conversies',      unit: 'count' },
+    { key: 'conversionsValue', label: 'Conversiewaarde', unit: 'eur' },
+    { key: 'roas',             label: 'ROAS',            unit: 'ratio' },
+    { key: 'cpa',              label: 'CPA',             unit: 'eur2' },
+    { key: 'engagements',      label: 'Interacties',     unit: 'count' },
   ];
+  if (platform === 'meta')      defs.push({ key: 'reach', label: 'Bereik', unit: 'count' }, { key: 'linkClicks', label: 'Linkclicks', unit: 'count' });
+  if (platform === 'pinterest') defs.push({ key: 'reach', label: 'Bereik', unit: 'count' }, { key: 'saves', label: 'Saves', unit: 'count' });
+  if (platform === 'google')    defs.push({ key: 'allConversions', label: 'Alle conversies (incl. view-through)', unit: 'count' });
+  return defs;
+}
+const DEFAULT_TABLE_COLUMNS = ['impressions', 'clicks', 'ctr', 'spend', 'cpc'];
+
+// Best verkochte producten (GA4 e-commerce items), voor de tabelwidget op de
+// Analytics-pagina. Sorteert op aantal verkocht — dat is wat "meest verkocht"
+// betekent voor de meeste marketeers, los van de omzet die het opleverde.
+function buildAnalyticsProductBreakdown(rows) {
+  const byItem = {};
+  rows.forEach(r => {
+    const name = r.itemName || '(onbekend)';
+    if (!byItem[name]) byItem[name] = { name, itemsPurchased: 0, itemRevenue: 0 };
+    byItem[name].itemsPurchased += parseFloat(r.itemsPurchased || 0);
+    byItem[name].itemRevenue    += parseFloat(r.itemRevenue || 0);
+  });
+  return Object.values(byItem).sort((a, b) => b.itemsPurchased - a.itemsPurchased);
+}
+
+function tableColumnsFor(platform, widget) {
+  if (platform === 'analytics') {
+    return [
+      { key: 'name', label: 'Product' },
+      { label: 'Aantal verkocht', cls: 'num', render: r => fmt(r.itemsPurchased) },
+      { label: 'Omzet',           cls: 'num', render: r => fmt(r.itemRevenue, 'eur') },
+    ];
+  }
+  const defs   = tableColumnDefsFor(platform);
+  const chosen = (widget?.tableColumns && widget.tableColumns.length) ? widget.tableColumns : DEFAULT_TABLE_COLUMNS;
+  const cols   = [{ key: 'name', label: 'Campagne' }];
+  chosen.forEach(key => {
+    const def = defs.find(d => d.key === key);
+    if (!def) return;
+    cols.push({ label: def.label, cls: 'num', render: r => fmt(r[key], def.unit === 'count' ? undefined : def.unit) });
+  });
+  return cols;
 }
 
 // ─── Yearly table (monthly totals + notes) ────────────────────────────────────
@@ -911,7 +986,22 @@ const ICON_COPY = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" s
 const ICON_PLUS = `<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 1.5v11M1.5 7h11"/></svg>`;
 const ICON_CHECK = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.7"/></svg>`;
 
-function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', table: 'Campagnetabel', yearly: 'Maandoverzicht', sheet: 'Gekoppeld sheet' }[type] || type; }
+function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', table: 'Tabel', yearly: 'Maandoverzicht', sheet: 'Gekoppeld sheet', demographics: 'Demografie' }[type] || type; }
+
+// ─── Demografie (Meta) ────────────────────────────────────────────────────────
+const DEMO_DIM_LABELS = { age: 'Leeftijd', gender: 'Geslacht', age_gender: 'Leeftijd + geslacht' };
+const DEMO_METRIC_DEFS = [
+  { key: 'spend',       label: 'Uitgaven',   unit: 'eur' },
+  { key: 'clicks',      label: 'Clicks',     unit: 'count' },
+  { key: 'impressions', label: 'Impressies', unit: 'count' },
+];
+function translateGender(g) {
+  const s = String(g || '').toLowerCase();
+  if (s === 'female') return 'Vrouw';
+  if (s === 'male')   return 'Man';
+  if (!s || s === 'unknown') return 'Onbekend';
+  return g;
+}
 
 function availableSheets() { return (currentClientSettings?.sheets || []); }
 
@@ -1007,7 +1097,15 @@ function formatYoyDelta(current, previous) {
 
 function defaultWidgetTitle(widget) {
   if (widget.type === 'yearly') return 'Maandoverzicht dit jaar';
-  if (widget.type === 'table')  return `Campagnes — ${PLATFORM_META[widget.platform]?.label || widget.platform}`;
+  if (widget.type === 'table') {
+    if (widget.platform === 'analytics') return 'Best verkochte producten';
+    return `Campagnes — ${PLATFORM_META[widget.platform]?.label || widget.platform}`;
+  }
+  if (widget.type === 'demographics') {
+    const dimLabel    = DEMO_DIM_LABELS[widget.breakdownDim] || DEMO_DIM_LABELS.age;
+    const metricLabel = DEMO_METRIC_DEFS.find(m => m.key === widget.metric)?.label || 'Uitgaven';
+    return `${metricLabel} per ${dimLabel.toLowerCase()} (Meta)`;
+  }
   if (widget.type === 'sheet') {
     const sheet = availableSheets().find(s => s.id === widget.sheetLinkId);
     return sheet?.label || widgetTypeLabel('sheet');
@@ -1035,8 +1133,13 @@ function renderWidgetKpiHtml(widget, ctx) {
 function renderWidgetTableHtml(widget, ctx) {
   const platform = widget.platform || 'meta';
   const rows = ctx.campaignBreakdown[platform] || [];
-  const cols = tableColumnsFor(platform);
-  if (!rows.length) return `<p class="widget-empty">Geen data voor ${PLATFORM_META[platform]?.label || platform} in de geselecteerde periode.</p>`;
+  const cols = tableColumnsFor(platform, widget);
+  if (!rows.length) {
+    const emptyMsg = platform === 'analytics'
+      ? 'Geen productverkopen gevonden in de geselecteerde periode (of dit GA4-property registreert geen e-commerce data).'
+      : `Geen data voor ${PLATFORM_META[platform]?.label || platform} in de geselecteerde periode.`;
+    return `<p class="widget-empty">${emptyMsg}</p>`;
+  }
   return `<div class="table-wrapper"><table>
     <thead><tr>${cols.map(c => `<th class="${c.cls||''}">${c.label}</th>`).join('')}</tr></thead>
     <tbody>${rows.map(r => '<tr>' + cols.map(c => `<td class="${c.cls||''}">${c.render ? c.render(r) : (r[c.key] ?? '—')}</td>`).join('') + '</tr>').join('')}</tbody>
@@ -1101,6 +1204,90 @@ async function renderWidgetSheet(widget) {
   } catch (err) {
     el.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
   }
+}
+
+// Demografie-widget (Meta): net als de sheet-widget wordt de data pas na het
+// renderen van de widget-shell opgehaald (los van de hoofd-Promise.allSettled
+// in loadReport), want dit is optioneel en gebruikt een extra breakdown-
+// dimensie (leeftijd/geslacht) die niet bij de dag-reeks van de andere widgets past.
+async function renderWidgetDemographics(widget) {
+  const el = document.getElementById(`w-demo-${widget.id}`);
+  if (!el) return;
+  if (!currentClient?.meta) {
+    el.innerHTML = `<p class="widget-empty">Geen Meta-koppeling voor deze klant.</p>`;
+    return;
+  }
+  const dim    = widget.breakdownDim || 'age';
+  const metric = widget.metric || 'spend';
+  try {
+    const dimFields = dim === 'age_gender' ? ['age', 'gender'] : [dim];
+    const d = await apiPost('/api/query', {
+      integration_id: 'facebook_ads', connection_key: currentClient.meta.connection_key, account_id: currentClient.meta.account_id,
+      settings: { attribution_window: 'ATTRIBUTION_MODEL_VIEW_CLICK###VIEW_ATTRIBUTION_WINDOW_1D###CLICK_ATTRIBUTION_WINDOW_7D' },
+      fields: [...dimFields, 'impressions', 'clicks', 'spend'],
+      date_range: getPeriodApiDateRange(), limit: 200,
+    });
+    const rows = d.data?.rows || [];
+    const grouped = groupDemographicsRows(rows, dim, metric);
+    if (!grouped.length) {
+      el.innerHTML = `<p class="widget-empty">Geen demografische data in de geselecteerde periode.</p>`;
+      return;
+    }
+    const canvasId = `w-demo-canvas-${widget.id}`;
+    el.innerHTML = `<canvas id="${canvasId}"></canvas>`;
+    const unit = DEMO_METRIC_DEFS.find(m => m.key === metric)?.unit || 'eur';
+    makePieChart(canvasId, grouped, unit);
+  } catch (err) {
+    el.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function groupDemographicsRows(rows, dim, metric) {
+  const by = {};
+  rows.forEach(r => {
+    let label;
+    if (dim === 'age')         label = r.age || 'Onbekend';
+    else if (dim === 'gender') label = translateGender(r.gender);
+    else                       label = `${r.age || 'Onbekend'} · ${translateGender(r.gender)}`;
+    by[label] = (by[label] || 0) + parseFloat(r[metric] || 0);
+  });
+  return Object.entries(by)
+    .map(([label, value]) => ({ label, value }))
+    .filter(x => x.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+function makePieChart(canvasId, data, unit) {
+  destroyChart(canvasId);
+  const ctxEl = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctxEl) return;
+  const total = data.reduce((sum, d) => sum + d.value, 0);
+  charts[canvasId] = new Chart(ctxEl, {
+    type: 'doughnut',
+    data: {
+      labels: data.map(d => d.label),
+      datasets: [{ data: data.map(d => d.value), backgroundColor: CHART_PALETTE, borderWidth: 0, borderRadius: 2 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7, font: { size: 11.5, family: "'Inter', sans-serif", weight: '500' }, color: '#1c1b1a', padding: 12 },
+        },
+        tooltip: {
+          backgroundColor: '#1c1b1a', titleFont: { size: 12, family: "'Inter', sans-serif", weight: '600' }, bodyFont: { size: 12, family: "'Inter', sans-serif" },
+          padding: 10, cornerRadius: 8, boxPadding: 4, usePointStyle: true, borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1,
+          callbacks: {
+            label: c => {
+              const pct = total > 0 ? (c.parsed / total * 100).toFixed(1) : '0';
+              return ` ${c.label}: ${fmt(c.parsed, unit)} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
 }
 
 // Past kolomselectie ("Zichtbare kolommen"), rijfilter ("Filter op rijen":
@@ -1178,6 +1365,7 @@ function buildWidgetElement(widget, ctx, pageKey) {
   else if (widget.type === 'table')  bodyHtml = renderWidgetTableHtml(widget, ctx);
   else if (widget.type === 'yearly') bodyHtml = renderWidgetYearlyHtml(widget);
   else if (widget.type === 'sheet')  bodyHtml = `<div id="w-sheet-${widget.id}" class="widget-sheet-loading">Laden…</div>`;
+  else if (widget.type === 'demographics') bodyHtml = `<div id="w-demo-${widget.id}" class="widget-sheet-loading">Laden…</div>`;
   else bodyHtml = '';
 
   const showEditBtn = widget.type !== 'yearly';
@@ -1213,14 +1401,17 @@ function renderPageWidgets(pageKey) {
 
   const chartWidgets = [];
   const sheetWidgets = [];
+  const demoWidgets  = [];
   widgets.forEach(w => {
     const el = buildWidgetElement(w, currentReportCtx, pageKey);
     container.appendChild(el);
     if (w.type === 'chart') chartWidgets.push(w);
     if (w.type === 'sheet') sheetWidgets.push(w);
+    if (w.type === 'demographics') demoWidgets.push(w);
   });
   chartWidgets.forEach(w => renderWidgetChart(w, currentReportCtx));
   sheetWidgets.forEach(renderWidgetSheet);
+  demoWidgets.forEach(renderWidgetDemographics);
   widgets.filter(w => w.type === 'yearly').forEach(w => renderYearlyBody(w.id, currentReportCtx.yearlyRows));
 
   container.classList.toggle('edit-on', editMode);
@@ -1305,11 +1496,28 @@ function renderWidgetEditorFields(type, widget) {
     return;
   }
   if (type === 'table') {
-    const platforms = availablePlatforms();
+    const platforms = [...availablePlatforms(), ...(hasAnalytics() ? ['analytics'] : [])];
     if (!platforms.length) { el.innerHTML = `<p class="widget-editor-hint">Deze klant heeft nog geen gekoppelde platformen.</p>`; return; }
+    const selectedPlatform = widget?.platform && platforms.includes(widget.platform) ? widget.platform : platforms[0];
     el.innerHTML = `<label class="settings-row"><span class="settings-label">Platform</span>
-      <select id="widget-platform-select">${platforms.map(p => `<option value="${p}" ${widget?.platform===p?'selected':''}>${PLATFORM_META[p].label}</option>`).join('')}</select>
-    </label>`;
+      <select id="widget-platform-select" onchange="onTablePlatformChange()">${platforms.map(p => `<option value="${p}" ${selectedPlatform===p?'selected':''}>${PLATFORM_META[p].label}</option>`).join('')}</select>
+    </label>
+    <div id="widget-table-columns-wrap"></div>`;
+    renderTableColumnsFields(selectedPlatform, widget);
+    return;
+  }
+  if (type === 'demographics') {
+    if (!currentClient?.meta) { el.innerHTML = `<p class="widget-editor-hint">Deze klant heeft geen Meta-koppeling.</p>`; return; }
+    const dim    = widget?.breakdownDim || 'age';
+    const metric = widget?.metric || 'spend';
+    el.innerHTML = `
+      <label class="settings-row"><span class="settings-label">Uitsplitsen op</span>
+        <select id="widget-demo-dim-select">${Object.entries(DEMO_DIM_LABELS).map(([k, l]) => `<option value="${k}" ${dim===k?'selected':''}>${l}</option>`).join('')}</select>
+      </label>
+      <label class="settings-row"><span class="settings-label">Metric</span>
+        <select id="widget-demo-metric-select">${DEMO_METRIC_DEFS.map(m => `<option value="${m.key}" ${metric===m.key?'selected':''}>${m.label}</option>`).join('')}</select>
+      </label>
+      <p class="widget-editor-hint">Toont een taartdiagram van Meta-advertentiedata, uitgesplitst per leeftijd en/of geslacht.</p>`;
     return;
   }
   // kpi / chart: metric checklist grouped by platform, plus een dropdown per
@@ -1363,6 +1571,32 @@ function onAddExtraMetric(selectEl) {
   selectEl.value = '';
 }
 
+// Kolommenkeuze voor de campagnetabel-widget: toont per platform de volledige
+// catalogus als checklist. Alleen relevant voor meta/google/pinterest — een
+// analytics-tabel toont altijd producten en heeft geen te kiezen kolommen.
+function renderTableColumnsFields(platform, widget) {
+  const wrap = document.getElementById('widget-table-columns-wrap');
+  if (!wrap) return;
+  if (platform === 'analytics') {
+    wrap.innerHTML = `<p class="widget-editor-hint">Toont automatisch de best verkochte producten (aantal verkocht + omzet). Geen kolommen te kiezen.</p>`;
+    return;
+  }
+  const defs   = tableColumnDefsFor(platform);
+  const chosen = new Set((widget?.platform === platform && widget?.tableColumns?.length) ? widget.tableColumns : DEFAULT_TABLE_COLUMNS);
+  wrap.innerHTML = `
+    <div class="settings-label" style="margin-top:12px; margin-bottom:6px;">Kolommen</div>
+    <div class="metric-checklist">
+      ${defs.map(d => `<label class="metric-check"><input type="checkbox" class="widget-table-col-check" value="${d.key}" ${chosen.has(d.key)?'checked':''}/> ${escapeHtml(d.label)}</label>`).join('')}
+    </div>
+    <p class="widget-editor-hint">Bijv. ROAS voor een webshop, of CPA en conversies voor een leadklant.</p>`;
+}
+
+function onTablePlatformChange() {
+  const platform = document.getElementById('widget-platform-select')?.value;
+  const widget = editingWidgetCtx?.widgetId ? (currentLayout[editingWidgetCtx.pageKey] || []).find(w => w.id === editingWidgetCtx.widgetId) : null;
+  renderTableColumnsFields(platform, widget);
+}
+
 function saveWidgetFromEditor() {
   if (!editingWidgetCtx) return;
   const { pageKey, widgetId } = editingWidgetCtx;
@@ -1377,11 +1611,20 @@ function saveWidgetFromEditor() {
   widget.type = type;
   if (title) widget.title = title; else delete widget.title;
 
+  // Velden die alleen bij één widgettype horen — bij elk type opnieuw opbouwen
+  // voorkomt dat oude instellingen van een eerder gekozen type blijven hangen.
+  delete widget.metrics; delete widget.platform; delete widget.sheetLinkId; delete widget.compareYoy;
+  delete widget.tableColumns; delete widget.breakdownDim; delete widget.metric;
+
   if (type === 'table') {
     widget.platform = document.getElementById('widget-platform-select')?.value || availablePlatforms()[0] || 'meta';
-    delete widget.metrics; delete widget.sheetLinkId; delete widget.compareYoy;
+    const chosenCols = [...document.querySelectorAll('.widget-table-col-check:checked')].map(c => c.value);
+    if (widget.platform !== 'analytics' && chosenCols.length) widget.tableColumns = chosenCols;
+  } else if (type === 'demographics') {
+    widget.breakdownDim = document.getElementById('widget-demo-dim-select')?.value || 'age';
+    widget.metric       = document.getElementById('widget-demo-metric-select')?.value || 'spend';
   } else if (type === 'yearly') {
-    delete widget.metrics; delete widget.platform; delete widget.sheetLinkId; delete widget.compareYoy;
+    // geen extra instellingen
   } else if (type === 'sheet') {
     widget.sheetLinkId = document.getElementById('widget-sheet-select')?.value || null;
     const hiddenCols = [...document.querySelectorAll('.sheet-col-check')].filter(c => !c.checked).map(c => c.value);
@@ -1390,12 +1633,10 @@ function saveWidgetFromEditor() {
     widget.sheetFilterOp      = document.getElementById('widget-sheet-filterop')?.value || 'eq';
     widget.sheetFilterValue   = document.getElementById('widget-sheet-filterval')?.value?.trim() || '';
     widget.sheetHideEmptyRows = !!document.getElementById('widget-sheet-hideempty')?.checked;
-    delete widget.metrics; delete widget.platform; delete widget.compareYoy;
   } else {
     const checked = [...document.querySelectorAll('#widget-editor-fields .metric-checklist input[type=checkbox]:checked')].map(c => c.value);
     widget.metrics = [...new Set(checked)];
     widget.compareYoy = !!document.getElementById('widget-compare-yoy')?.checked;
-    delete widget.platform; delete widget.sheetLinkId;
   }
 
   closeWidgetEditor();
@@ -1488,6 +1729,7 @@ const DEFAULT_LAYOUT = {
     { id: 'def-meta-spend', type: 'chart', title: 'Uitgaven per dag (€)', metrics: ['meta.spend'] },
     { id: 'def-meta-eng',   type: 'chart', title: 'Clicks en impressies per dag', metrics: ['meta.clicks', 'meta.impressions'] },
     { id: 'def-meta-table', type: 'table', platform: 'meta' },
+    { id: 'def-meta-demo',  type: 'demographics', breakdownDim: 'age_gender', metric: 'spend' },
   ],
   google: [
     { id: 'def-google-kpi',   type: 'kpi', title: 'KPI-overzicht', metrics: ['google.impressions', 'google.clicks', 'google.ctr', 'google.spend', 'google.cpc', 'google.cpm'] },
@@ -1505,6 +1747,7 @@ const DEFAULT_LAYOUT = {
     { id: 'def-an-kpi',      type: 'kpi', title: 'KPI-overzicht', metrics: ['analytics.sessions', 'analytics.activeUsers', 'analytics.engagementRate', 'analytics.keyEvents'] },
     { id: 'def-an-sessions', type: 'chart', title: 'Sessies en gebruikers per dag', metrics: ['analytics.sessions', 'analytics.activeUsers'] },
     { id: 'def-an-conv',     type: 'chart', title: 'Conversies per dag', metrics: ['analytics.keyEvents'] },
+    { id: 'def-an-products', type: 'table', platform: 'analytics' },
   ],
 };
 
@@ -1547,8 +1790,8 @@ async function loadReport(forcedClientId) {
   const prevYearRange = previousYearDateRange(dateRange);
 
   try {
-    const [metaRes, googleRes, pintRes, analyticsRes, metaYear, googleYear, pintYear, metaPrev, googlePrev, pintPrev] = await Promise.allSettled([
-      loadMeta(client, dateRange), loadGoogle(client, dateRange), loadPinterest(client, dateRange), loadAnalytics(client, dateRange),
+    const [metaRes, googleRes, pintRes, analyticsRes, analyticsProductsRes, metaYear, googleYear, pintYear, metaPrev, googlePrev, pintPrev] = await Promise.allSettled([
+      loadMeta(client, dateRange), loadGoogle(client, dateRange), loadPinterest(client, dateRange), loadAnalytics(client, dateRange), loadAnalyticsProducts(client, dateRange),
       loadMeta(client, yearDateRange), loadGoogle(client, yearDateRange), loadPinterestYearly(client, yearDateRange),
       loadMeta(client, prevYearRange), loadGoogle(client, prevYearRange), loadPinterest(client, prevYearRange),
     ]);
@@ -1560,6 +1803,9 @@ async function loadReport(forcedClientId) {
     const allLabels  = ['Meta', 'Google', 'Pinterest', 'Meta (jaar)', 'Google (jaar)', 'Pinterest (jaar)'];
     const errs = allResults.map((r,i)=>r.status==='rejected'?allLabels[i]+': '+r.reason?.message:null).filter(Boolean);
     if (client.analytics && analyticsRes.status === 'rejected') errs.push('Analytics: ' + (analyticsRes.reason?.message || 'onbekende fout'));
+    // Alleen los melden als de "gewone" analytics-query wél lukte — anders is het
+    // gewoon dezelfde AUTH_EXPIRED-fout die al hierboven getoond wordt.
+    if (client.analytics && analyticsRes.status !== 'rejected' && analyticsProductsRes.status === 'rejected') errs.push('Analytics producten: ' + (analyticsProductsRes.reason?.message || 'onbekende fout'));
     if (errs.length) showError(errs.join(' | '));
     // Fouten bij het ophalen van "vorig jaar" (bv. Pinterest, dat > 90 dagen terug
     // toch al niets teruggeeft) tellen niet als harde fout — de vergelijking valt
@@ -1580,6 +1826,7 @@ async function loadReport(forcedClientId) {
         meta: buildCampaignBreakdown('meta', metaRows),
         google: buildCampaignBreakdown('google', googleRows),
         pinterest: buildCampaignBreakdown('pinterest', pintRows),
+        analytics: buildAnalyticsProductBreakdown(ok(analyticsProductsRes)),
       },
       yearlyRows: buildYearlyTable(ok(metaYear), ok(googleYear), ok(pintYear)),
     };

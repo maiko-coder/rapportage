@@ -549,19 +549,23 @@ select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-l
 .widget-chart .widget-body,
 .widget-table .widget-body,
 .widget-yearly .widget-body,
-.widget-sheet .widget-body {
+.widget-sheet .widget-body,
+.widget-demographics .widget-body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-xs);
   transition: box-shadow var(--t), border-color var(--t);
 }
-.widget-chart .widget-body { padding: 20px 24px 16px; }
+.widget-chart .widget-body,
+.widget-demographics .widget-body { padding: 20px 24px 16px; }
+.widget-demographics .widget-body canvas { max-height: 280px; }
 .widget-sheet-loading { padding: 24px; text-align: center; font-size: 13px; color: var(--text-muted); }
 .widget-chart .widget-body:hover,
 .widget-table .widget-body:hover,
 .widget-yearly .widget-body:hover,
-.widget-sheet .widget-body:hover { box-shadow: var(--shadow-sm); }
+.widget-sheet .widget-body:hover,
+.widget-demographics .widget-body:hover { box-shadow: var(--shadow-sm); }
 
 .widget-header {
   display: flex;
@@ -628,7 +632,8 @@ select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-l
 .sortable-chosen .widget-chart .widget-body,
 .sortable-chosen .widget-table .widget-body,
 .sortable-chosen .widget-yearly .widget-body,
-.sortable-chosen .widget-sheet .widget-body { box-shadow: var(--shadow-md); }
+.sortable-chosen .widget-sheet .widget-body,
+.sortable-chosen .widget-demographics .widget-body { box-shadow: var(--shadow-md); }
 
 /* ── EDIT MODE NAV BUTTON ───────────────────── */
 #edit-mode-btn.active {
