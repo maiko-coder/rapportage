@@ -33,9 +33,10 @@
     <span class="brand-title">Rapportage</span>
     <span class="brand-sep" id="header-client-sep" style="display:none">·</span>
     <span class="brand-client" id="header-client"></span>
+    <button class="switch-client-btn hidden" id="switch-client-btn" onclick="showClientPicker()">Wissel klant</button>
   </div>
-  <div class="header-controls" id="header-controls">
-    <div class="ctrl-group" id="client-ctrl">
+  <div class="header-controls hidden" id="header-controls">
+    <div class="ctrl-group hidden" id="client-ctrl">
       <label>Klant</label>
       <select id="client-select"><option value="">— kies klant —</option></select>
     </div>
@@ -79,7 +80,16 @@
   </div>
 </header>
 
-<div class="layout">
+<!-- ── KLANTKEUZE (landingsscherm voor marketeer) ── -->
+<div id="client-picker-screen" class="client-picker-screen hidden">
+  <div class="client-picker-inner">
+    <h1>Kies een klant</h1>
+    <p>Selecteer de klant waarvan je het rapport wilt bekijken of aanpassen.</p>
+    <div class="client-picker-grid" id="client-picker-grid"></div>
+  </div>
+</div>
+
+<div class="layout hidden" id="main-layout">
 
   <nav class="sidebar">
     <div class="nav-section">Weergave</div>

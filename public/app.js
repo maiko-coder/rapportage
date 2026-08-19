@@ -11,6 +11,12 @@ let editMode             = false;
 // CLIENT_MODE: set by server when accessing /r/:clientId
 const CLIENT_MODE = window.CLIENT_MODE || null;
 
+const PLATFORM_BADGE = {
+  meta:      { label: 'Meta',      badgeClass: 'badge-meta' },
+  google:    { label: 'Google',    badgeClass: 'badge-google' },
+  pinterest: { label: 'Pinterest', badgeClass: 'badge-pinterest' },
+};
+
 // ─── Period State ─────────────────────────────────────────────────────────────
 const PERIODS = [
   { value: 'last7days',   label: 'Laatste 7 dagen' },
@@ -287,8 +293,8 @@ function renderPromoPageHtml(platform, promo) {
 
   if (CLIENT_MODE) {
     // Hide client selector, settings link, edit-mode toggle
-    const clientCtrl = document.getElementById('client-ctrl');
-    if (clientCtrl) clientCtrl.style.display = 'none';
+    document.getElementById('main-layout')?.classList.remove('hidden');
+    document.getElementById('header-controls')?.classList.remove('hidden');
     const settingsLink = document.getElementById('settings-nav-link');
     const settingsDivider = document.getElementById('settings-nav-divider');
     if (settingsLink) settingsLink.style.display = 'none';
@@ -312,16 +318,64 @@ function renderPromoPageHtml(platform, promo) {
       }
     });
   } else {
-    // Normal mode: populate client dropdown
+    // Normal mode: populate client dropdown (snel wisselen) + tegel-landingsscherm
     const sel = document.getElementById('client-select');
     (CLIENTS || []).forEach(c => {
       const o = document.createElement('option');
       o.value = c.id; o.textContent = c.name;
       sel.appendChild(o);
     });
-    sel.addEventListener('change', () => { if (sel.value) loadReport(); });
+    sel.addEventListener('change', () => { if (sel.value) selectClient(sel.value); });
+
+    renderClientPickerGrid();
+    showClientPicker();
   }
 })();
+
+// ─── Klantkeuzescherm (marketeer-landingspagina) ──────────────────────────────
+function renderClientPickerGrid() {
+  const grid = document.getElementById('client-picker-grid');
+  if (!grid) return;
+  if (!CLIENTS || !CLIENTS.length) {
+    grid.innerHTML = '<div style="color:var(--text-muted)">Geen klanten gevonden.</div>';
+    return;
+  }
+  grid.innerHTML = CLIENTS.map(c => {
+    const platforms = ['meta', 'google', 'pinterest'].filter(p => !!c[p]);
+    const initial   = (c.name || '?').trim().charAt(0).toUpperCase();
+    const badges    = platforms.map(p =>
+      `<span class="badge ${PLATFORM_BADGE[p]?.badgeClass || ''}">${PLATFORM_BADGE[p]?.label || p}</span>`
+    ).join('');
+    return `
+      <button class="client-tile" onclick="selectClient('${c.id}')">
+        <div class="client-tile-avatar">${initial}</div>
+        <div class="client-tile-name">${escapeHtml(c.name)}</div>
+        <div class="client-tile-badges">${badges}</div>
+      </button>`;
+  }).join('');
+}
+
+function showClientPicker() {
+  document.getElementById('client-picker-screen')?.classList.remove('hidden');
+  document.getElementById('main-layout')?.classList.add('hidden');
+  document.getElementById('header-controls')?.classList.add('hidden');
+  document.getElementById('switch-client-btn')?.classList.add('hidden');
+  const sep = document.getElementById('header-client-sep');
+  if (sep) sep.style.display = 'none';
+  const headerClient = document.getElementById('header-client');
+  if (headerClient) headerClient.textContent = '';
+  setEditMode(false);
+}
+
+function selectClient(clientId) {
+  document.getElementById('client-picker-screen')?.classList.add('hidden');
+  document.getElementById('main-layout')?.classList.remove('hidden');
+  document.getElementById('header-controls')?.classList.remove('hidden');
+  document.getElementById('switch-client-btn')?.classList.remove('hidden');
+  const sel = document.getElementById('client-select');
+  if (sel) sel.value = clientId;
+  loadReport(clientId);
+}
 
 async function doLogout() {
   await fetch('/api/logout', { method: 'POST' });
