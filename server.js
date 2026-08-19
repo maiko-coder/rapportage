@@ -24,12 +24,16 @@ const authDb = process.env.DATABASE_URL ? new Pool({
 }) : null;
 
 // ─── Settings store ───────────────────────────────────────────────────────────
-// Op Vercel is het lokale bestandssysteem (/tmp) niet blijvend tussen requests —
-// elke serverless-invocatie kan een andere instantie raken. Daarom slaan we
-// klantinstellingen op in Postgres (dezelfde DB als de login-tabel) zodra die
-// beschikbaar is. Zonder DATABASE_URL (puur lokale dev zonder DB) valt dit
-// terug op een lokaal JSON-bestand.
-const DATA_DIR      = path.join(__dirname, 'data');
+// Instellingen horen in Postgres (dezelfde DB als de login-tabel) te staan zodra
+// DATABASE_URL beschikbaar is — dat is de enige optie die daadwerkelijk blijvend
+// is op Vercel. Ontbreekt DATABASE_URL (bv. omdat 'm niet is ingesteld in de
+// Vercel project-omgevingsvariabelen), dan vallen we terug op een lokaal
+// JSON-bestand. Op Vercel is de projectmap zelf read-only, dus die fallback
+// gebruikt /tmp (schrijfbaar, maar NIET blijvend tussen requests/deploys) om in
+// elk geval geen harde crash te geven — voeg DATABASE_URL toe aan de Vercel
+// env-vars zodat instellingen echt bewaard blijven.
+const IS_VERCEL     = !!process.env.VERCEL;
+const DATA_DIR      = IS_VERCEL ? '/tmp' : path.join(__dirname, 'data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 // CREATE TABLE IF NOT EXISTS is goedkoop en idempotent — we roepen 'm aan het
@@ -51,6 +55,10 @@ async function ensureSettingsTable() {
 }
 
 if (!authDb) {
+  if (IS_VERCEL) {
+    console.error('WAARSCHUWING: DATABASE_URL ontbreekt op Vercel — instellingen worden niet blijvend opgeslagen ' +
+      '(vallen terug op /tmp) en inloggen staat volledig open. Voeg DATABASE_URL toe aan de Vercel project-omgevingsvariabelen.');
+  }
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     if (!fs.existsSync(SETTINGS_FILE)) {
