@@ -833,6 +833,7 @@ const PAGE_KEYS = ['samenvatting', 'meta', 'google', 'pinterest'];
 const ICON_GRIP = `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><circle cx="4" cy="3" r="1.15"/><circle cx="10" cy="3" r="1.15"/><circle cx="4" cy="7" r="1.15"/><circle cx="10" cy="7" r="1.15"/><circle cx="4" cy="11" r="1.15"/><circle cx="10" cy="11" r="1.15"/></svg>`;
 const ICON_PENCIL = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5a1.5 1.5 0 012.12 2.12L5 13.25 2 14l.75-3L11.5 2.5z"/></svg>`;
 const ICON_TRASH = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M12.5 4.5l-.6 8.4a1.5 1.5 0 01-1.5 1.4h-4.8a1.5 1.5 0 01-1.5-1.4l-.6-8.4"/></svg>`;
+const ICON_COPY = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.3"/><path d="M10.5 5.5V3.8a1.3 1.3 0 00-1.3-1.3H3.8a1.3 1.3 0 00-1.3 1.3v5.4a1.3 1.3 0 001.3 1.3h1.7"/></svg>`;
 const ICON_PLUS = `<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 1.5v11M1.5 7h11"/></svg>`;
 const ICON_CHECK = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.7"/></svg>`;
 
@@ -1102,6 +1103,7 @@ function buildWidgetElement(widget, ctx, pageKey) {
       </div>
       <span class="widget-toolbar-actions edit-only">
         ${showEditBtn ? `<button class="widget-icon-btn" onclick="openWidgetEditor('${pageKey}','${widget.id}')" title="Bewerken">${ICON_PENCIL}</button>` : ''}
+        <button class="widget-icon-btn" onclick="duplicateWidget('${pageKey}','${widget.id}')" title="Dupliceren">${ICON_COPY}</button>
         <button class="widget-icon-btn widget-icon-danger" onclick="removeWidget('${pageKey}','${widget.id}')" title="Verwijderen">${ICON_TRASH}</button>
       </span>
     </div>
@@ -1160,6 +1162,18 @@ function addWidget(pageKey) { openWidgetEditor(pageKey, null); }
 function removeWidget(pageKey, widgetId) {
   currentLayout[pageKey] = (currentLayout[pageKey] || []).filter(w => w.id !== widgetId);
   renderPageWidgets(pageKey);
+}
+
+function duplicateWidget(pageKey, widgetId) {
+  const widgets = currentLayout[pageKey] || [];
+  const idx = widgets.findIndex(w => w.id === widgetId);
+  if (idx === -1) return;
+  const copy = JSON.parse(JSON.stringify(widgets[idx]));
+  copy.id = 'w_' + Math.random().toString(36).slice(2, 10);
+  copy.title = (widgets[idx].title || defaultWidgetTitle(widgets[idx])) + ' (kopie)';
+  currentLayout[pageKey] = [...widgets.slice(0, idx + 1), copy, ...widgets.slice(idx + 1)];
+  renderPageWidgets(pageKey);
+  showToast('Widget gedupliceerd ✓');
 }
 
 function openWidgetEditor(pageKey, widgetId) {
