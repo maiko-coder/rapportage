@@ -204,7 +204,21 @@ function updateSidebarForClient(client, platformSettings) {
     if (!btn) return;
     const hasAccount = !!client[platform];
     const enabled    = platformSettings ? platformSettings[platform] !== false : true;
-    btn.style.display = (hasAccount && enabled) ? '' : 'none';
+    const promo      = currentClientSettings?.promotions?.[platform];
+    const promoted   = !hasAccount && !!promo?.enabled && !!promo?.headline;
+    btn.style.display = (hasAccount && enabled) || promoted ? '' : 'none';
+
+    let badge = btn.querySelector('.nav-badge');
+    if (promoted) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'nav-badge';
+        badge.textContent = 'Nieuw';
+        btn.appendChild(badge);
+      }
+    } else if (badge) {
+      badge.remove();
+    }
   });
 
   // Also show/hide the "Platformen" section header based on any visible platform
@@ -214,6 +228,57 @@ function updateSidebarForClient(client, platformSettings) {
   });
   const header = document.querySelector('.nav-section-platforms');
   if (header) header.style.display = anyVisible ? '' : 'none';
+}
+
+// ─── Promotiepagina's voor ontbrekende kanalen ────────────────────────────────
+const PROMO_PLATFORM_META = {
+  meta:      { label: 'Meta Ads',      badge: 'badge-meta' },
+  google:    { label: 'Google Ads',    badge: 'badge-google' },
+  pinterest: { label: 'Pinterest Ads', badge: 'badge-pinterest' },
+};
+
+function renderPromoPages() {
+  ['meta', 'google', 'pinterest'].forEach(platform => {
+    const hasAccount = !!(currentClient && currentClient[platform]);
+    const promo       = currentClientSettings?.promotions?.[platform];
+    const showPromo   = !hasAccount && !!promo?.enabled && !!promo?.headline;
+    const promoEl     = document.getElementById('promo-' + platform);
+    const toolbarEl   = document.getElementById('toolbar-' + platform);
+    const widgetsEl   = document.getElementById('widgets-' + platform);
+    if (!promoEl) return;
+
+    if (showPromo) {
+      promoEl.innerHTML = renderPromoPageHtml(platform, promo);
+      promoEl.classList.remove('hidden');
+      if (toolbarEl) toolbarEl.style.display = 'none';
+      if (widgetsEl) widgetsEl.style.display = 'none';
+    } else {
+      promoEl.classList.add('hidden');
+      promoEl.innerHTML = '';
+      if (toolbarEl) toolbarEl.style.display = '';
+      if (widgetsEl) widgetsEl.style.display = '';
+    }
+  });
+}
+
+function renderPromoPageHtml(platform, promo) {
+  const meta = PROMO_PLATFORM_META[platform] || { label: platform, badge: '' };
+  const benefits = (promo.benefits || []).map(b => `
+    <li class="promo-benefit">
+      <span class="promo-benefit-icon">${ICON_CHECK}</span>
+      <span>${escapeHtml(b)}</span>
+    </li>`).join('');
+
+  return `
+    <div class="promo-page-inner">
+      <div class="promo-hero">
+        <span class="badge ${meta.badge}">${meta.label}</span>
+        <h2>${escapeHtml(promo.headline || '')}</h2>
+        ${promo.subheadline ? `<p class="promo-sub">${escapeHtml(promo.subheadline)}</p>` : ''}
+      </div>
+      ${benefits ? `<ul class="promo-benefits">${benefits}</ul>` : ''}
+      ${promo.cta ? `<div class="promo-cta-banner">${escapeHtml(promo.cta)}</div>` : ''}
+    </div>`;
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -631,6 +696,7 @@ const ICON_GRIP = `<svg width="14" height="14" viewBox="0 0 14 14" fill="current
 const ICON_PENCIL = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5a1.5 1.5 0 012.12 2.12L5 13.25 2 14l.75-3L11.5 2.5z"/></svg>`;
 const ICON_TRASH = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M12.5 4.5l-.6 8.4a1.5 1.5 0 01-1.5 1.4h-4.8a1.5 1.5 0 01-1.5-1.4l-.6-8.4"/></svg>`;
 const ICON_PLUS = `<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 1.5v11M1.5 7h11"/></svg>`;
+const ICON_CHECK = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 4.7"/></svg>`;
 
 function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', table: 'Campagnetabel', yearly: 'Maandoverzicht', sheet: 'Gekoppeld sheet' }[type] || type; }
 
@@ -1013,6 +1079,7 @@ async function loadReport(forcedClientId) {
 
   // Update sidebar based on client platforms + settings
   updateSidebarForClient(client, currentClientSettings?.platforms);
+  renderPromoPages();
 
   currentLayout = resolveLayout(currentClientSettings?.reportLayout);
   setEditMode(false);

@@ -9,6 +9,7 @@ const { Pool } = require('pg');
 const bcrypt   = require('bcryptjs');
 const session  = require('express-session');
 const sheetsApi = require('./sheets');
+const promotionApi = require('./promotion');
 
 const app      = express();
 const PORT     = 3000;
@@ -167,6 +168,7 @@ app.post('/api/settings', requireAuth, (req, res) => {
 
     if (cfg.platforms        !== undefined) entry.platforms        = cfg.platforms;
     if (cfg.accountOverrides !== undefined) entry.accountOverrides = cfg.accountOverrides;
+    if (cfg.website          !== undefined) entry.website          = cfg.website;
 
     current.clients[id] = entry;
   }
@@ -196,6 +198,7 @@ app.get('/api/client-config/:clientId', (req, res) => {
     accountOverrides: cfg.accountOverrides || {},
     reportLayout:     cfg.reportLayout     || null,
     sheets:           (cfg.sheets || []).map(s => ({ id: s.id, label: s.label })),
+    promotions:       cfg.promotions       || {},
   });
 });
 
@@ -272,6 +275,105 @@ app.get('/api/client-config/:clientId/sheet-data/:linkId', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message || 'Kon sheetdata niet ophalen.' });
   }
+});
+
+// ─── API: promotie voor ontbrekende kanalen aan/uit zetten (marketer-only) ───
+const PROMO_PLATFORMS = ['meta', 'google', 'pinterest'];
+
+app.post('/api/client-config/:clientId/promotion', requireAuth, async (req, res) => {
+  const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
+  const { platform, enabled, clientName } = req.body || {};
+  if (!PROMO_PLATFORMS.includes(platform)) {
+    return res.status(400).json({ error: 'Ongeldig platform.' });
+  }
+
+  const current    = readSettings();
+  const cfg        = current.clients[clientId] || {};
+  const promotions = { ...(cfg.promotions || {}) };
+  const existing   = promotions[platform] || {};
+
+  if (enabled) {
+    if (!cfg.website) {
+      return res.status(400).json({ error: 'Vul eerst een website in bij deze klant voordat je promotie aanzet.' });
+    }
+    if (existing.headline) {
+      promotions[platform] = { ...existing, enabled: true };
+    } else {
+      if (!promotionApi.isConfigured()) {
+        return res.status(500).json({ error: 'ANTHROPIC_API_KEY is niet geconfigureerd op de server.' });
+      }
+      try {
+        const content = await promotionApi.generatePromoContent({
+          clientName: clientName || clientId,
+          website: cfg.website,
+          platform,
+        });
+        promotions[platform] = { ...content, enabled: true, generatedAt: new Date().toISOString() };
+      } catch (err) {
+        return res.status(500).json({ error: err.message || 'Kon promotietekst niet genereren.' });
+      }
+    }
+  } else {
+    promotions[platform] = { ...existing, enabled: false };
+  }
+
+  current.clients[clientId] = { ...cfg, promotions };
+  writeSettings(current);
+  res.json({ ok: true, promotion: promotions[platform] });
+});
+
+// ─── API: promotietekst opnieuw laten genereren door de AI (marketer-only) ───
+app.post('/api/client-config/:clientId/promotion/regenerate', requireAuth, async (req, res) => {
+  const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
+  const { platform, clientName } = req.body || {};
+  if (!PROMO_PLATFORMS.includes(platform)) {
+    return res.status(400).json({ error: 'Ongeldig platform.' });
+  }
+  const current = readSettings();
+  const cfg     = current.clients[clientId] || {};
+  if (!cfg.website) {
+    return res.status(400).json({ error: 'Vul eerst een website in bij deze klant.' });
+  }
+  if (!promotionApi.isConfigured()) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is niet geconfigureerd op de server.' });
+  }
+  try {
+    const content    = await promotionApi.generatePromoContent({
+      clientName: clientName || clientId,
+      website: cfg.website,
+      platform,
+    });
+    const promotions = { ...(cfg.promotions || {}) };
+    promotions[platform] = { ...content, enabled: true, generatedAt: new Date().toISOString() };
+    current.clients[clientId] = { ...cfg, promotions };
+    writeSettings(current);
+    res.json({ ok: true, promotion: promotions[platform] });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Kon promotietekst niet genereren.' });
+  }
+});
+
+// ─── API: promotietekst handmatig aanpassen door de marketeer ────────────────
+app.post('/api/client-config/:clientId/promotion/edit', requireAuth, (req, res) => {
+  const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
+  const { platform, headline, subheadline, benefits, cta } = req.body || {};
+  if (!PROMO_PLATFORMS.includes(platform)) {
+    return res.status(400).json({ error: 'Ongeldig platform.' });
+  }
+  const current    = readSettings();
+  const cfg        = current.clients[clientId] || {};
+  const promotions = { ...(cfg.promotions || {}) };
+  const existing   = promotions[platform] || {};
+  promotions[platform] = {
+    ...existing,
+    headline:     String(headline || existing.headline || ''),
+    subheadline:  String(subheadline || ''),
+    benefits:     Array.isArray(benefits) ? benefits.map(String).slice(0, 6) : (existing.benefits || []),
+    cta:          String(cta || ''),
+  };
+  current.clients[clientId] = { ...cfg, promotions };
+  writeSettings(current);
+  res.json({ ok: true, promotion: promotions[platform] });
 });
 
 // ─── Reporting Ninja proxy ────────────────────────────────────────────────────

@@ -11,6 +11,11 @@ const PLATFORM_BADGE_CLASS = { meta: 'badge-meta', google: 'badge-google', pinte
 // Lokale (niet-opgeslagen) staat van het "sheet koppelen"-formulier, per klant.
 const pendingSheetAdd = {};
 
+const PROMO_PLATFORM_LABELS = { meta: 'Meta Ads', google: 'Google Ads', pinterest: 'Pinterest Ads' };
+// Lokale staat voor de promotie-sectie: laad-/bewerkstatus per `${clientId}:${platform}`.
+const promoBusy = {};
+const promoEditing = {};
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 (async function init() {
   try {
@@ -91,6 +96,14 @@ function renderClientCard(client) {
           </div>
         </div>
 
+        <!-- Website -->
+        <div class="settings-row">
+          <div class="settings-label">Website</div>
+          <input type="url" class="settings-account-input" id="website-${client.id}"
+                 value="${escHtml(saved.website || '')}" placeholder="https://voorbeeld.nl" />
+          <div class="settings-pw-hint">Wordt gebruikt om AI-promotieteksten te personaliseren. Vergeet niet op "Alles opslaan" te klikken.</div>
+        </div>
+
         <!-- Wachtwoord -->
         <div class="settings-row">
           <div class="settings-label">Wachtwoord</div>
@@ -135,8 +148,167 @@ function renderClientCard(client) {
           ${renderSheetsSection(client.id, saved)}
         </div>
 
+        <!-- Promotie voor ontbrekende kanalen -->
+        ${renderPromotionSection(client, saved)}
+
       </div>
     </div>`;
+}
+
+// ─── Promotie voor ontbrekende kanalen ────────────────────────────────────────
+function renderPromotionSection(client, saved) {
+  const missing = ['meta', 'google', 'pinterest'].filter(p => !client[p]);
+  if (!missing.length) return '';
+
+  const website     = saved.website || '';
+  const promotions  = saved.promotions || {};
+
+  const rows = missing.map(p => {
+    const promo   = promotions[p] || {};
+    const key     = `${client.id}:${p}`;
+    const busy    = !!promoBusy[key];
+    const editing = !!promoEditing[key];
+    const enabled = !!promo.enabled;
+
+    let body = '';
+    if (busy) {
+      body = `<div class="promo-loading">AI genereert gepersonaliseerde tekst…</div>`;
+    } else if (enabled && promo.headline) {
+      if (editing) {
+        body = `
+          <div class="promo-edit-form">
+            <label class="settings-row">
+              <span class="settings-label">Titel</span>
+              <input type="text" class="settings-account-input" id="promo-headline-${key}" value="${escHtml(promo.headline || '')}" />
+            </label>
+            <label class="settings-row">
+              <span class="settings-label">Subtitel</span>
+              <input type="text" class="settings-account-input" id="promo-sub-${key}" value="${escHtml(promo.subheadline || '')}" />
+            </label>
+            <label class="settings-row">
+              <span class="settings-label">Voordelen (één per regel)</span>
+              <textarea class="settings-account-input" id="promo-benefits-${key}" rows="3">${escHtml((promo.benefits || []).join('\n'))}</textarea>
+            </label>
+            <label class="settings-row">
+              <span class="settings-label">Call-to-action</span>
+              <input type="text" class="settings-account-input" id="promo-cta-${key}" value="${escHtml(promo.cta || '')}" />
+            </label>
+            <div class="sheet-add-actions">
+              <button class="btn-sm" onclick="cancelEditPromo('${client.id}','${p}')">Annuleren</button>
+              <button class="btn-primary" onclick="savePromoEdit('${client.id}','${p}')">Opslaan</button>
+            </div>
+          </div>`;
+      } else {
+        body = `
+          <div class="promo-preview">
+            <strong>${escHtml(promo.headline)}</strong>
+            ${promo.subheadline ? `<p>${escHtml(promo.subheadline)}</p>` : ''}
+            ${(promo.benefits || []).length ? `<ul>${(promo.benefits || []).map(b => `<li>${escHtml(b)}</li>`).join('')}</ul>` : ''}
+            ${promo.cta ? `<div class="promo-cta-preview">${escHtml(promo.cta)}</div>` : ''}
+          </div>
+          <div class="sheet-add-actions">
+            <button class="btn-sm" onclick="startEditPromo('${client.id}','${p}')">Bewerken</button>
+            <button class="btn-sm" onclick="regeneratePromo('${client.id}','${p}')">Opnieuw genereren</button>
+          </div>`;
+      }
+    }
+
+    return `
+      <div class="promo-row">
+        <label class="settings-toggle-label">
+          <input type="checkbox" ${enabled ? 'checked' : ''} ${busy || !website ? 'disabled' : ''}
+                 onchange="togglePromo('${client.id}','${p}',this.checked)" />
+          ${PROMO_PLATFORM_LABELS[p]}
+        </label>
+        ${body}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="settings-row">
+      <div class="settings-label">Promotie voor ontbrekende kanalen</div>
+      ${!website ? `<div class="settings-pw-hint">Vul eerst een website in (en sla op) om promotie te kunnen genereren.</div>` : ''}
+      <div class="promo-list">${rows}</div>
+    </div>`;
+}
+
+async function togglePromo(clientId, platform, checked) {
+  const key = `${clientId}:${platform}`;
+  if (checked) { promoBusy[key] = true; renderAll(); }
+  try {
+    const client = CLIENTS.find(c => c.id === clientId);
+    const r = await fetch(`/api/client-config/${clientId}/promotion`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, enabled: checked, clientName: client?.name || clientId }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Actie mislukt.');
+    if (!currentSettings.clients) currentSettings.clients = {};
+    if (!currentSettings.clients[clientId]) currentSettings.clients[clientId] = {};
+    currentSettings.clients[clientId].promotions = {
+      ...(currentSettings.clients[clientId].promotions || {}), [platform]: d.promotion,
+    };
+  } catch (err) {
+    alert('Fout: ' + err.message);
+  }
+  delete promoBusy[key];
+  renderAll();
+}
+
+async function regeneratePromo(clientId, platform) {
+  const key = `${clientId}:${platform}`;
+  promoBusy[key] = true;
+  renderAll();
+  try {
+    const client = CLIENTS.find(c => c.id === clientId);
+    const r = await fetch(`/api/client-config/${clientId}/promotion/regenerate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, clientName: client?.name || clientId }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Genereren mislukt.');
+    currentSettings.clients[clientId].promotions = {
+      ...(currentSettings.clients[clientId].promotions || {}), [platform]: d.promotion,
+    };
+  } catch (err) {
+    alert('Fout: ' + err.message);
+  }
+  delete promoBusy[key];
+  renderAll();
+}
+
+function startEditPromo(clientId, platform) {
+  promoEditing[`${clientId}:${platform}`] = true;
+  renderAll();
+}
+
+function cancelEditPromo(clientId, platform) {
+  delete promoEditing[`${clientId}:${platform}`];
+  renderAll();
+}
+
+async function savePromoEdit(clientId, platform) {
+  const key         = `${clientId}:${platform}`;
+  const headline    = document.getElementById(`promo-headline-${key}`)?.value?.trim() || '';
+  const subheadline = document.getElementById(`promo-sub-${key}`)?.value?.trim() || '';
+  const benefits    = (document.getElementById(`promo-benefits-${key}`)?.value || '')
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  const cta         = document.getElementById(`promo-cta-${key}`)?.value?.trim() || '';
+  try {
+    const r = await fetch(`/api/client-config/${clientId}/promotion/edit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, headline, subheadline, benefits, cta }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Opslaan mislukt.');
+    currentSettings.clients[clientId].promotions = {
+      ...(currentSettings.clients[clientId].promotions || {}), [platform]: d.promotion,
+    };
+  } catch (err) {
+    alert('Fout: ' + err.message);
+  }
+  delete promoEditing[key];
+  renderAll();
 }
 
 // ─── Google Sheets koppelen ────────────────────────────────────────────────────
@@ -349,6 +521,10 @@ async function saveAll() {
       if (val && val !== defaultVal) overrides[p] = val;
     });
     entry.accountOverrides = overrides;
+
+    // Website (voor AI-promotieteksten)
+    const websiteInput = document.getElementById(`website-${id}`);
+    if (websiteInput) entry.website = websiteInput.value.trim();
 
     payload.clients[id] = entry;
   }
