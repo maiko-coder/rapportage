@@ -114,9 +114,18 @@ function hashPassword(pw) {
 // steeds random uitgelogd. Met DATABASE_URL bewaren we sessies daarom in
 // Postgres (dezelfde DB als de instellingen), zodat inloggen ook echt blijft
 // hangen tussen requests/instances.
+let lastSessionStoreError = null;
 app.use(express.json());
 app.use(session({
-  store: authDb ? new pgSession({ pool: authDb, tableName: 'rapportage_session', createTableIfMissing: true }) : undefined,
+  store: authDb ? new pgSession({
+    pool: authDb,
+    tableName: 'rapportage_session',
+    createTableIfMissing: true,
+    errorLog: (...args) => {
+      lastSessionStoreError = args.map(a => (a instanceof Error ? a.message : String(a))).join(' ');
+      console.error('[session store]', ...args);
+    },
+  }) : undefined,
   secret: process.env.SESSION_SECRET || 'rapportage-dev-secret-change-in-prod',
   resave: false,
   saveUninitialized: false,
@@ -177,6 +186,21 @@ app.get('/api/me', (req, res) => {
   } else {
     res.status(401).json({ error: 'Niet ingelogd' });
   }
+});
+
+// ─── Debug: laat zien of de sessie (ingelogd blijven) goed wordt herkend ──────
+// Bewust ZONDER requireAuth, zodat je 'm ook kan checken als je net (onterecht)
+// naar /login bent gestuurd — anders zou deze route zelf ook direct
+// vastlopen op precies het probleem dat we willen diagnosticeren.
+app.get('/api/debug/session-status', (req, res) => {
+  res.json({
+    hasAuthDb: !!authDb,
+    cookieHeaderPresent: !!req.headers.cookie,
+    sessionId: req.sessionID || null,
+    hasUserId: !!req.session?.userId,
+    userEmail: req.session?.email || null,
+    lastSessionStoreError,
+  });
 });
 
 // ─── Debug: laat zien of instellingen echt blijvend worden opgeslagen ─────────
