@@ -3,9 +3,14 @@
 // De klant deelt zijn Google Sheet met het e-mailadres van dit service-account
 // (als "Kijker"), en de tool haalt daarna live de waarden op.
 //
-// Config: zet de volledige service-account JSON-sleutel in de env var
-// GOOGLE_SERVICE_ACCOUNT_JSON (als één regel JSON), bijvoorbeeld via je hosting
-// provider's secret/env instellingen. Nooit in git committen.
+// Config: twee manieren om het service-account te configureren (env vars):
+//   1) GOOGLE_SHEETS_CLIENT_EMAIL + GOOGLE_SHEETS_PRIVATE_KEY (zelfde patroon
+//      als in het Google-Ads-project — meestal het handigst omdat dat account
+//      vaak al hergebruikt kan worden).
+//   2) GOOGLE_SERVICE_ACCOUNT_JSON — de volledige service-account JSON-sleutel
+//      als één regel, als alternatief.
+// Nooit in git committen — zet dit alleen in .env (lokaal) of je hosting
+// provider's secret/env instellingen (bv. Vercel project settings).
 
 const { google } = require('googleapis');
 
@@ -15,13 +20,20 @@ let serviceAccountEmail = null;
 let credentialsError    = null;
 
 function loadCredentials() {
+  const email = process.env.GOOGLE_SHEETS_CLIENT_EMAIL;
+  const key   = process.env.GOOGLE_SHEETS_PRIVATE_KEY;
+  if (email && key) {
+    return { client_email: email, private_key: key.replace(/\\n/g, '\n') };
+  }
+
   const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!raw) {
-    credentialsError = 'GOOGLE_SERVICE_ACCOUNT_JSON is niet ingesteld op de server.';
+    credentialsError = 'Google Sheets service-account is niet geconfigureerd op de server (GOOGLE_SHEETS_CLIENT_EMAIL/GOOGLE_SHEETS_PRIVATE_KEY of GOOGLE_SERVICE_ACCOUNT_JSON ontbreken).';
     return null;
   }
   try {
-    return JSON.parse(raw);
+    const creds = JSON.parse(raw);
+    return { client_email: creds.client_email, private_key: creds.private_key };
   } catch (e) {
     credentialsError = 'GOOGLE_SERVICE_ACCOUNT_JSON bevat geen geldige JSON: ' + e.message;
     return null;
