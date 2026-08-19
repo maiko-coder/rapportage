@@ -216,8 +216,8 @@ function renderPromotionSection(client, saved) {
     return `
       <div class="promo-row">
         <label class="settings-toggle-label">
-          <input type="checkbox" ${enabled ? 'checked' : ''} ${busy || !website ? 'disabled' : ''}
-                 onchange="togglePromo('${client.id}','${p}',this.checked)" />
+          <input type="checkbox" ${enabled ? 'checked' : ''} ${busy ? 'disabled' : ''}
+                 onchange="togglePromo('${client.id}','${p}',this.checked,this)" />
           ${PROMO_PLATFORM_LABELS[p]}
         </label>
         ${body}
@@ -227,14 +227,45 @@ function renderPromotionSection(client, saved) {
   return `
     <div class="settings-row">
       <div class="settings-label">Promotie voor ontbrekende kanalen</div>
-      ${!website ? `<div class="settings-pw-hint">Vul eerst een website in (en sla op) om promotie te kunnen genereren.</div>` : ''}
+      ${!website ? `<div class="settings-pw-hint">Vul hierboven een website in — die wordt automatisch opgeslagen zodra je promotie aanzet.</div>` : ''}
       <div class="promo-list">${rows}</div>
     </div>`;
 }
 
-async function togglePromo(clientId, platform, checked) {
+async function togglePromo(clientId, platform, checked, checkbox) {
   const key = `${clientId}:${platform}`;
-  if (checked) { promoBusy[key] = true; renderAll(); }
+
+  if (checked) {
+    const websiteInput = document.getElementById(`website-${clientId}`);
+    const website = websiteInput?.value?.trim() || '';
+    if (!website) {
+      alert('Vul eerst een website in bij deze klant (bovenaan de kaart) voordat je promotie aanzet.');
+      if (checkbox) checkbox.checked = false;
+      return;
+    }
+    // Zorg dat de website al is opgeslagen, ook als de marketeer nog niet op
+    // "Alles opslaan" heeft geklikt — anders wijst de server het verzoek af.
+    const saved = currentSettings.clients?.[clientId] || {};
+    if (saved.website !== website) {
+      try {
+        const r = await fetch('/api/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clients: { [clientId]: { website } } }),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.ok) throw new Error(d.error || 'Kon website niet opslaan.');
+        if (!currentSettings.clients) currentSettings.clients = {};
+        currentSettings.clients[clientId] = { ...(currentSettings.clients[clientId] || {}), website };
+      } catch (err) {
+        alert('Fout bij opslaan van website: ' + err.message);
+        if (checkbox) checkbox.checked = false;
+        return;
+      }
+    }
+  }
+
+  promoBusy[key] = true;
+  renderAll();
   try {
     const client = CLIENTS.find(c => c.id === clientId);
     const r = await fetch(`/api/client-config/${clientId}/promotion`, {
