@@ -414,7 +414,7 @@ async function saveSheets(clientId, sheets) {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sheets }),
     });
     const d = await r.json();
-    if (!d.ok) throw new Error('Opslaan mislukt.');
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Opslaan mislukt.');
     if (!currentSettings.clients) currentSettings.clients = {};
     currentSettings.clients[clientId] = { ...(currentSettings.clients[clientId] || {}), sheets };
   } catch (err) {
@@ -536,7 +536,7 @@ async function saveAll() {
       body: JSON.stringify(payload),
     });
     const data = await r.json();
-    if (data.ok) {
+    if (r.ok && data.ok) {
       Object.keys(pwChanged).forEach(k => delete pwChanged[k]);
       const fresh = await fetch('/api/settings');
       currentSettings = await fresh.json();
@@ -545,7 +545,7 @@ async function saveAll() {
       statusEl.className = 'settings-save-status success';
       setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'settings-save-status'; }, 3000);
     } else {
-      throw new Error('Server fout');
+      throw new Error(data.error || 'Server fout');
     }
   } catch (err) {
     statusEl.textContent = 'Fout bij opslaan: ' + err.message;

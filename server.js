@@ -31,15 +31,24 @@ const authDb = process.env.DATABASE_URL ? new Pool({
 // terug op een lokaal JSON-bestand.
 const DATA_DIR      = path.join(__dirname, 'data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
-const settingsTableReady = authDb
-  ? authDb.query(`
-      CREATE TABLE IF NOT EXISTS rapportage_client_settings (
-        client_id  TEXT PRIMARY KEY,
-        data       JSONB NOT NULL DEFAULT '{}'::jsonb,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    `).catch(e => console.error('Kon rapportage_client_settings niet aanmaken:', e.message))
-  : Promise.resolve();
+
+// CREATE TABLE IF NOT EXISTS is goedkoop en idempotent — we roepen 'm aan het
+// begin van elke read/write aan i.p.v. één keer bij het opstarten van de
+// module, zodat we nooit een niet-afgehandelde promise-rejection overhouden
+// op serverless (waar module-load en de eerste request door elkaar kunnen
+// lopen).
+let settingsTableChecked = false;
+async function ensureSettingsTable() {
+  if (!authDb || settingsTableChecked) return;
+  await authDb.query(`
+    CREATE TABLE IF NOT EXISTS rapportage_client_settings (
+      client_id  TEXT PRIMARY KEY,
+      data       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  settingsTableChecked = true;
+}
 
 if (!authDb) {
   try {
@@ -52,18 +61,17 @@ if (!authDb) {
   }
 }
 
+// Let op: readSettings/writeSettings gooien bewust een error door bij een DB-
+// probleem (in plaats van hem stil te slikken), zodat de API-routes dit kunnen
+// omzetten in een duidelijke foutmelding voor de marketeer i.p.v. een valse
+// "opgeslagen"-bevestiging die bij de volgende load weer verdwenen blijkt.
 async function readSettings() {
   if (authDb) {
-    await settingsTableReady;
-    try {
-      const { rows } = await authDb.query('SELECT client_id, data FROM rapportage_client_settings');
-      const clients = {};
-      for (const row of rows) clients[row.client_id] = row.data;
-      return { clients };
-    } catch (e) {
-      console.error('readSettings DB error:', e.message);
-      return { clients: {} };
-    }
+    await ensureSettingsTable();
+    const { rows } = await authDb.query('SELECT client_id, data FROM rapportage_client_settings');
+    const clients = {};
+    for (const row of rows) clients[row.client_id] = row.data;
+    return { clients };
   }
   try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); }
   catch { return { clients: {} }; }
@@ -71,24 +79,19 @@ async function readSettings() {
 
 async function writeSettings(data) {
   if (authDb) {
-    await settingsTableReady;
-    try {
-      const entries = Object.entries(data.clients || {});
-      for (const [clientId, cfg] of entries) {
-        await authDb.query(
-          `INSERT INTO rapportage_client_settings (client_id, data, updated_at)
-           VALUES ($1, $2::jsonb, now())
-           ON CONFLICT (client_id) DO UPDATE SET data = $2::jsonb, updated_at = now()`,
-          [clientId, JSON.stringify(cfg)]
-        );
-      }
-    } catch (e) {
-      console.error('writeSettings DB error:', e.message);
+    await ensureSettingsTable();
+    const entries = Object.entries(data.clients || {});
+    for (const [clientId, cfg] of entries) {
+      await authDb.query(
+        `INSERT INTO rapportage_client_settings (client_id, data, updated_at)
+         VALUES ($1, $2::jsonb, now())
+         ON CONFLICT (client_id) DO UPDATE SET data = $2::jsonb, updated_at = now()`,
+        [clientId, JSON.stringify(cfg)]
+      );
     }
     return;
   }
-  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2)); }
-  catch (e) { console.error('writeSettings error:', e.message); }
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2));
 }
 
 function hashPassword(pw) {
@@ -187,63 +190,83 @@ app.get('/', requireAuth, (req, res) => {
 
 // ─── API: get settings (passwords masked) ─────────────────────────────────────
 app.get('/api/settings', requireAuth, async (req, res) => {
-  const settings = await readSettings();
-  const safe = { clients: {} };
-  for (const [id, cfg] of Object.entries(settings.clients || {})) {
-    safe.clients[id] = { ...cfg, password: cfg.password ? '••••••••' : '' };
+  try {
+    const settings = await readSettings();
+    const safe = { clients: {} };
+    for (const [id, cfg] of Object.entries(settings.clients || {})) {
+      safe.clients[id] = { ...cfg, password: cfg.password ? '••••••••' : '' };
+    }
+    res.json(safe);
+  } catch (err) {
+    console.error('GET /api/settings error:', err.message);
+    res.status(500).json({ error: 'Kon instellingen niet ophalen: ' + err.message });
   }
-  res.json(safe);
 });
 
 // ─── API: save settings ───────────────────────────────────────────────────────
 app.post('/api/settings', requireAuth, async (req, res) => {
-  const incoming = req.body;
-  const current  = await readSettings();
+  try {
+    const incoming = req.body;
+    const current  = await readSettings();
 
-  for (const [id, cfg] of Object.entries(incoming.clients || {})) {
-    const existing = current.clients[id] || {};
-    const entry    = { ...existing };
+    for (const [id, cfg] of Object.entries(incoming.clients || {})) {
+      const existing = current.clients[id] || {};
+      const entry    = { ...existing };
 
-    if (cfg.password && cfg.password !== '••••••••') {
-      entry.password = hashPassword(cfg.password);
-    } else if (cfg.password === '') {
-      entry.password = '';
+      if (cfg.password && cfg.password !== '••••••••') {
+        entry.password = hashPassword(cfg.password);
+      } else if (cfg.password === '') {
+        entry.password = '';
+      }
+
+      if (cfg.platforms        !== undefined) entry.platforms        = cfg.platforms;
+      if (cfg.accountOverrides !== undefined) entry.accountOverrides = cfg.accountOverrides;
+      if (cfg.website          !== undefined) entry.website          = cfg.website;
+
+      current.clients[id] = entry;
     }
 
-    if (cfg.platforms        !== undefined) entry.platforms        = cfg.platforms;
-    if (cfg.accountOverrides !== undefined) entry.accountOverrides = cfg.accountOverrides;
-    if (cfg.website          !== undefined) entry.website          = cfg.website;
-
-    current.clients[id] = entry;
+    await writeSettings(current);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /api/settings error:', err.message);
+    res.status(500).json({ error: 'Opslaan mislukt: ' + err.message });
   }
-
-  await writeSettings(current);
-  res.json({ ok: true });
 });
 
 // ─── API: authenticate a client link (public) ─────────────────────────────────
 app.post('/api/auth/:clientId', async (req, res) => {
-  const { clientId }  = req.params;
-  const { password }  = req.body;
-  const settings      = await readSettings();
-  const cfg           = settings.clients[clientId];
+  try {
+    const { clientId }  = req.params;
+    const { password }  = req.body;
+    const settings      = await readSettings();
+    const cfg           = settings.clients[clientId];
 
-  if (!cfg?.password) return res.json({ valid: true });
-  res.json({ valid: hashPassword(password) === cfg.password });
+    if (!cfg?.password) return res.json({ valid: true });
+    res.json({ valid: hashPassword(password) === cfg.password });
+  } catch (err) {
+    console.error('POST /api/auth/:clientId error:', err.message);
+    res.status(500).json({ error: 'Kon niet verifiëren: ' + err.message });
+  }
 });
 
 // ─── API: client config (public — used by /r/:clientId pages) ─────────────────
 app.get('/api/client-config/:clientId', async (req, res) => {
-  const { clientId } = req.params;
-  const cfg          = (await readSettings()).clients[clientId] || {};
-  res.json({
-    hasPassword:      !!cfg.password,
-    platforms:        cfg.platforms        || null,
-    accountOverrides: cfg.accountOverrides || {},
-    reportLayout:     cfg.reportLayout     || null,
-    sheets:           (cfg.sheets || []).map(s => ({ id: s.id, label: s.label })),
-    promotions:       cfg.promotions       || {},
-  });
+  try {
+    const { clientId } = req.params;
+    const cfg          = (await readSettings()).clients[clientId] || {};
+    res.json({
+      hasPassword:      !!cfg.password,
+      platforms:        cfg.platforms        || null,
+      accountOverrides: cfg.accountOverrides || {},
+      reportLayout:     cfg.reportLayout     || null,
+      sheets:           (cfg.sheets || []).map(s => ({ id: s.id, label: s.label })),
+      promotions:       cfg.promotions       || {},
+    });
+  } catch (err) {
+    console.error('GET /api/client-config error:', err.message);
+    res.status(500).json({ error: 'Kon klantconfiguratie niet ophalen: ' + err.message });
+  }
 });
 
 // ─── API: save report layout (marketeer-only — drag-and-drop widget config) ──
@@ -253,10 +276,15 @@ app.post('/api/client-config/:clientId/layout', requireAuth, async (req, res) =>
   if (!reportLayout || typeof reportLayout !== 'object') {
     return res.status(400).json({ error: 'reportLayout ontbreekt of is ongeldig.' });
   }
-  const current = await readSettings();
-  current.clients[clientId] = { ...(current.clients[clientId] || {}), reportLayout };
-  await writeSettings(current);
-  res.json({ ok: true });
+  try {
+    const current = await readSettings();
+    current.clients[clientId] = { ...(current.clients[clientId] || {}), reportLayout };
+    await writeSettings(current);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /layout error:', err.message);
+    res.status(500).json({ error: 'Opslaan van layout mislukt: ' + err.message });
+  }
 });
 
 // ─── API: resolve & test a Google Sheet link (marketer-only) ─────────────────
@@ -288,10 +316,15 @@ app.post('/api/client-config/:clientId/sheets', requireAuth, async (req, res) =>
   if (!Array.isArray(sheets)) {
     return res.status(400).json({ error: 'sheets moet een array zijn.' });
   }
-  const current = await readSettings();
-  current.clients[clientId] = { ...(current.clients[clientId] || {}), sheets };
-  await writeSettings(current);
-  res.json({ ok: true });
+  try {
+    const current = await readSettings();
+    current.clients[clientId] = { ...(current.clients[clientId] || {}), sheets };
+    await writeSettings(current);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /sheets error:', err.message);
+    res.status(500).json({ error: 'Opslaan van sheet mislukt: ' + err.message });
+  }
 });
 
 // ─── API: live sheet data for a linked sheet (public — used by report widgets) ─
@@ -301,16 +334,16 @@ const SHEET_CACHE_MS = 3 * 60 * 1000;
 app.get('/api/client-config/:clientId/sheet-data/:linkId', async (req, res) => {
   const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
   const { linkId } = req.params;
-  const cfg  = (await readSettings()).clients[clientId] || {};
-  const link = (cfg.sheets || []).find(s => s.id === linkId);
-  if (!link) return res.status(404).json({ error: 'Sheet-koppeling niet gevonden.' });
-
-  const cacheKey = `${link.sheetId}::${link.tabName || ''}`;
-  const cached   = sheetDataCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < SHEET_CACHE_MS) {
-    return res.json({ ok: true, ...cached.data });
-  }
   try {
+    const cfg  = (await readSettings()).clients[clientId] || {};
+    const link = (cfg.sheets || []).find(s => s.id === linkId);
+    if (!link) return res.status(404).json({ error: 'Sheet-koppeling niet gevonden.' });
+
+    const cacheKey = `${link.sheetId}::${link.tabName || ''}`;
+    const cached   = sheetDataCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < SHEET_CACHE_MS) {
+      return res.json({ ok: true, ...cached.data });
+    }
     const values         = await sheetsApi.fetchSheetValues(link.sheetId, link.tabName);
     const [headers, ...rows] = values;
     const data = { headers: headers || [], rows: rows || [] };
@@ -331,39 +364,44 @@ app.post('/api/client-config/:clientId/promotion', requireAuth, async (req, res)
     return res.status(400).json({ error: 'Ongeldig platform.' });
   }
 
-  const current    = await readSettings();
-  const cfg        = current.clients[clientId] || {};
-  const promotions = { ...(cfg.promotions || {}) };
-  const existing   = promotions[platform] || {};
+  try {
+    const current    = await readSettings();
+    const cfg        = current.clients[clientId] || {};
+    const promotions = { ...(cfg.promotions || {}) };
+    const existing   = promotions[platform] || {};
 
-  if (enabled) {
-    if (!cfg.website) {
-      return res.status(400).json({ error: 'Vul eerst een website in bij deze klant voordat je promotie aanzet.' });
-    }
-    if (existing.headline) {
-      promotions[platform] = { ...existing, enabled: true };
+    if (enabled) {
+      if (!cfg.website) {
+        return res.status(400).json({ error: 'Vul eerst een website in bij deze klant voordat je promotie aanzet.' });
+      }
+      if (existing.headline) {
+        promotions[platform] = { ...existing, enabled: true };
+      } else {
+        if (!promotionApi.isConfigured()) {
+          return res.status(500).json({ error: 'ANTHROPIC_API_KEY is niet geconfigureerd op de server.' });
+        }
+        try {
+          const content = await promotionApi.generatePromoContent({
+            clientName: clientName || clientId,
+            website: cfg.website,
+            platform,
+          });
+          promotions[platform] = { ...content, enabled: true, generatedAt: new Date().toISOString() };
+        } catch (err) {
+          return res.status(500).json({ error: err.message || 'Kon promotietekst niet genereren.' });
+        }
+      }
     } else {
-      if (!promotionApi.isConfigured()) {
-        return res.status(500).json({ error: 'ANTHROPIC_API_KEY is niet geconfigureerd op de server.' });
-      }
-      try {
-        const content = await promotionApi.generatePromoContent({
-          clientName: clientName || clientId,
-          website: cfg.website,
-          platform,
-        });
-        promotions[platform] = { ...content, enabled: true, generatedAt: new Date().toISOString() };
-      } catch (err) {
-        return res.status(500).json({ error: err.message || 'Kon promotietekst niet genereren.' });
-      }
+      promotions[platform] = { ...existing, enabled: false };
     }
-  } else {
-    promotions[platform] = { ...existing, enabled: false };
-  }
 
-  current.clients[clientId] = { ...cfg, promotions };
-  await writeSettings(current);
-  res.json({ ok: true, promotion: promotions[platform] });
+    current.clients[clientId] = { ...cfg, promotions };
+    await writeSettings(current);
+    res.json({ ok: true, promotion: promotions[platform] });
+  } catch (err) {
+    console.error('POST /promotion error:', err.message);
+    res.status(500).json({ error: 'Opslaan van promotie mislukt: ' + err.message });
+  }
 });
 
 // ─── API: promotietekst opnieuw laten genereren door de AI (marketer-only) ───
@@ -373,27 +411,33 @@ app.post('/api/client-config/:clientId/promotion/regenerate', requireAuth, async
   if (!PROMO_PLATFORMS.includes(platform)) {
     return res.status(400).json({ error: 'Ongeldig platform.' });
   }
-  const current = await readSettings();
-  const cfg     = current.clients[clientId] || {};
-  if (!cfg.website) {
-    return res.status(400).json({ error: 'Vul eerst een website in bij deze klant.' });
-  }
-  if (!promotionApi.isConfigured()) {
-    return res.status(500).json({ error: 'ANTHROPIC_API_KEY is niet geconfigureerd op de server.' });
-  }
   try {
-    const content    = await promotionApi.generatePromoContent({
-      clientName: clientName || clientId,
-      website: cfg.website,
-      platform,
-    });
+    const current = await readSettings();
+    const cfg     = current.clients[clientId] || {};
+    if (!cfg.website) {
+      return res.status(400).json({ error: 'Vul eerst een website in bij deze klant.' });
+    }
+    if (!promotionApi.isConfigured()) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY is niet geconfigureerd op de server.' });
+    }
+    let content;
+    try {
+      content = await promotionApi.generatePromoContent({
+        clientName: clientName || clientId,
+        website: cfg.website,
+        platform,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message || 'Kon promotietekst niet genereren.' });
+    }
     const promotions = { ...(cfg.promotions || {}) };
     promotions[platform] = { ...content, enabled: true, generatedAt: new Date().toISOString() };
     current.clients[clientId] = { ...cfg, promotions };
     await writeSettings(current);
     res.json({ ok: true, promotion: promotions[platform] });
   } catch (err) {
-    res.status(500).json({ error: err.message || 'Kon promotietekst niet genereren.' });
+    console.error('POST /promotion/regenerate error:', err.message);
+    res.status(500).json({ error: 'Opslaan mislukt: ' + err.message });
   }
 });
 
@@ -404,20 +448,25 @@ app.post('/api/client-config/:clientId/promotion/edit', requireAuth, async (req,
   if (!PROMO_PLATFORMS.includes(platform)) {
     return res.status(400).json({ error: 'Ongeldig platform.' });
   }
-  const current    = await readSettings();
-  const cfg        = current.clients[clientId] || {};
-  const promotions = { ...(cfg.promotions || {}) };
-  const existing   = promotions[platform] || {};
-  promotions[platform] = {
-    ...existing,
-    headline:     String(headline || existing.headline || ''),
-    subheadline:  String(subheadline || ''),
-    benefits:     Array.isArray(benefits) ? benefits.map(String).slice(0, 6) : (existing.benefits || []),
-    cta:          String(cta || ''),
-  };
-  current.clients[clientId] = { ...cfg, promotions };
-  await writeSettings(current);
-  res.json({ ok: true, promotion: promotions[platform] });
+  try {
+    const current    = await readSettings();
+    const cfg        = current.clients[clientId] || {};
+    const promotions = { ...(cfg.promotions || {}) };
+    const existing   = promotions[platform] || {};
+    promotions[platform] = {
+      ...existing,
+      headline:     String(headline || existing.headline || ''),
+      subheadline:  String(subheadline || ''),
+      benefits:     Array.isArray(benefits) ? benefits.map(String).slice(0, 6) : (existing.benefits || []),
+      cta:          String(cta || ''),
+    };
+    current.clients[clientId] = { ...cfg, promotions };
+    await writeSettings(current);
+    res.json({ ok: true, promotion: promotions[platform] });
+  } catch (err) {
+    console.error('POST /promotion/edit error:', err.message);
+    res.status(500).json({ error: 'Opslaan mislukt: ' + err.message });
+  }
 });
 
 // ─── Reporting Ninja proxy ────────────────────────────────────────────────────
