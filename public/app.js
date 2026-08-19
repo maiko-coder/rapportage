@@ -756,6 +756,88 @@ function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', tab
 
 function availableSheets() { return (currentClientSettings?.sheets || []); }
 
+// Cache van sheet headers/rows binnen de widget-editor sessie, zodat we niet
+// steeds opnieuw hoeven te fetchen als de marketeer filters aanpast.
+const sheetPreviewCache = {};
+
+async function loadSheetPreviewForEditor(linkId) {
+  if (sheetPreviewCache[linkId]) return sheetPreviewCache[linkId];
+  const r = await fetch(`/api/client-config/${currentClientId}/sheet-data/${linkId}`);
+  const d = await r.json();
+  if (!r.ok || !d.ok) throw new Error(d.error || 'Kon sheet niet laden.');
+  const preview = { headers: d.headers || [], rows: d.rows || [] };
+  sheetPreviewCache[linkId] = preview;
+  return preview;
+}
+
+function onWidgetSheetChange() {
+  const linkId = document.getElementById('widget-sheet-select')?.value;
+  loadSheetColumnOptions(linkId, null);
+}
+
+// Herbouwt het filter op kolom + waarde als de gekozen kolom wijzigt, met
+// behoud van de reeds aangevinkte kolommen en de "verberg lege rijen" stand.
+function onWidgetSheetFilterColChange() {
+  const linkId    = document.getElementById('widget-sheet-select')?.value;
+  const filterCol = document.getElementById('widget-sheet-filtercol')?.value || '';
+  const hiddenCols = [...document.querySelectorAll('.sheet-col-check')].filter(c => !c.checked).map(c => c.value);
+  const hideEmpty  = !!document.getElementById('widget-sheet-hideempty')?.checked;
+  loadSheetColumnOptions(linkId, { sheetHiddenCols: hiddenCols, sheetFilterCol: filterCol, sheetFilterValue: '', sheetHideEmptyRows: hideEmpty });
+}
+
+async function loadSheetColumnOptions(linkId, widget) {
+  const wrap = document.getElementById('widget-sheet-columns-wrap');
+  if (!wrap || !linkId) return;
+  try {
+    const preview = await loadSheetPreviewForEditor(linkId);
+    const headers = preview.headers;
+    if (!headers.length) {
+      wrap.innerHTML = `<p class="widget-editor-hint">Dit sheet bevat nog geen data/kolomkoppen.</p>`;
+      return;
+    }
+    const hidden     = new Set(widget?.sheetHiddenCols || []);
+    const filterCol  = widget?.sheetFilterCol || '';
+    const filterVal  = widget?.sheetFilterValue || '';
+    const hideEmpty  = !!widget?.sheetHideEmptyRows;
+    const filterColIdx = headers.indexOf(filterCol);
+    const distinctVals = filterColIdx >= 0
+      ? [...new Set(preview.rows.map(r => String(r[filterColIdx] ?? '').trim()).filter(Boolean))]
+      : [];
+
+    wrap.innerHTML = `
+      <div class="settings-row">
+        <span class="settings-label">Zichtbare kolommen</span>
+        <div class="metric-checklist">
+          ${headers.map(h => `<label class="metric-check"><input type="checkbox" class="sheet-col-check" value="${escapeHtml(h)}" ${hidden.has(h) ? '' : 'checked'}/> ${escapeHtml(h || '(naamloos)')}</label>`).join('')}
+        </div>
+      </div>
+      <label class="settings-row">
+        <span class="settings-label">Filter op kolom</span>
+        <select id="widget-sheet-filtercol" onchange="onWidgetSheetFilterColChange()">
+          <option value="">Geen filter (alle rijen)</option>
+          ${headers.map(h => `<option value="${escapeHtml(h)}" ${filterCol===h?'selected':''}>${escapeHtml(h)}</option>`).join('')}
+        </select>
+      </label>
+      <div id="widget-sheet-filterval-wrap">
+        ${filterColIdx >= 0 ? `
+        <label class="settings-row">
+          <span class="settings-label">Waarde</span>
+          <select id="widget-sheet-filterval">
+            <option value="">Alle</option>
+            ${distinctVals.map(v => `<option value="${escapeHtml(v)}" ${filterVal===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
+          </select>
+        </label>` : ''}
+      </div>
+      <label class="settings-toggle-label">
+        <input type="checkbox" id="widget-sheet-hideempty" ${hideEmpty ? 'checked' : ''}/>
+        Verberg rijen zonder data (bv. toekomstige maanden)
+      </label>
+      <p class="widget-editor-hint">Tip: voor "2026 tm nu" kies je kolom + waarde 2026 én vink je "verberg rijen zonder data" aan — nog niet ingevulde maanden verdwijnen dan automatisch.</p>`;
+  } catch (err) {
+    wrap.innerHTML = `<p class="widget-editor-hint" style="color:var(--danger)">${escapeHtml(err.message)}</p>`;
+  }
+}
+
 function defaultWidgetTitle(widget) {
   if (widget.type === 'yearly') return 'Maandoverzicht dit jaar';
   if (widget.type === 'table')  return `Campagnes — ${PLATFORM_META[widget.platform]?.label || widget.platform}`;
@@ -822,10 +904,39 @@ async function renderWidgetSheet(widget) {
     const r = await fetch(`/api/client-config/${currentClientId}/sheet-data/${widget.sheetLinkId}`);
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || 'Kon sheetdata niet laden.');
-    el.innerHTML = renderSheetTableHtml(d.headers, d.rows);
+    const { headers, rows } = applySheetWidgetFilters(widget, d.headers || [], d.rows || []);
+    el.innerHTML = renderSheetTableHtml(headers, rows);
   } catch (err) {
     el.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
   }
+}
+
+// Past kolomselectie ("Zichtbare kolommen"), rijfilter ("Filter op kolom" +
+// waarde) en het verbergen van lege rijen toe zoals ingesteld in de
+// widget-editor. Werkt op de ruwe headers/rows zoals ze uit het sheet komen.
+function applySheetWidgetFilters(widget, headers, rows) {
+  const hiddenSet   = new Set(widget.sheetHiddenCols || []);
+  const visibleIdx  = headers.map((_, i) => i).filter(i => !hiddenSet.has(headers[i]));
+
+  let filteredRows = rows;
+  const filterCol = widget.sheetFilterCol;
+  const filterVal = widget.sheetFilterValue;
+  if (filterCol) {
+    const colIdx = headers.indexOf(filterCol);
+    if (colIdx >= 0 && filterVal) {
+      filteredRows = filteredRows.filter(r => String(r[colIdx] ?? '').trim() === filterVal);
+    }
+  }
+  if (widget.sheetHideEmptyRows) {
+    // Eerste kolom is meestal het label (bv. maandnaam) — die telt niet mee,
+    // zo blijven toekomstige maanden zonder ingevulde data automatisch weg.
+    filteredRows = filteredRows.filter(r => r.slice(1).some(cell => String(cell ?? '').trim() !== ''));
+  }
+
+  return {
+    headers: visibleIdx.map(i => headers[i]),
+    rows: filteredRows.map(r => visibleIdx.map(i => r[i])),
+  };
 }
 
 function renderSheetTableHtml(headers, rows) {
@@ -947,10 +1058,14 @@ function renderWidgetEditorFields(type, widget) {
       el.innerHTML = `<p class="widget-editor-hint">Deze klant heeft nog geen gekoppelde Google Sheets. Voeg er eerst één toe via Instellingen → Gekoppelde sheets.</p>`;
       return;
     }
-    el.innerHTML = `<label class="settings-row"><span class="settings-label">Sheet</span>
-      <select id="widget-sheet-select">${sheets.map(s => `<option value="${s.id}" ${widget?.sheetLinkId===s.id?'selected':''}>${escapeHtml(s.label || 'Sheet')}</option>`).join('')}</select>
-    </label>
-    <p class="widget-editor-hint">Toont de eerste rij van het gekoppelde tabblad als kolomkoppen, en de rest als tabelgegevens — precies zoals het in het sheet staat.</p>`;
+    const selectedId = widget?.sheetLinkId || sheets[0].id;
+    el.innerHTML = `
+      <label class="settings-row"><span class="settings-label">Sheet</span>
+        <select id="widget-sheet-select" onchange="onWidgetSheetChange()">${sheets.map(s => `<option value="${s.id}" ${selectedId===s.id?'selected':''}>${escapeHtml(s.label || 'Sheet')}</option>`).join('')}</select>
+      </label>
+      <p class="widget-editor-hint">Live vanuit het sheet — wijzigingen daar komen automatisch in het rapport (binnen enkele minuten).</p>
+      <div id="widget-sheet-columns-wrap"><p class="widget-editor-hint">Kolommen laden…</p></div>`;
+    loadSheetColumnOptions(selectedId, widget);
     return;
   }
   if (type === 'table') {
@@ -994,6 +1109,11 @@ function saveWidgetFromEditor() {
     delete widget.metrics; delete widget.platform; delete widget.sheetLinkId;
   } else if (type === 'sheet') {
     widget.sheetLinkId = document.getElementById('widget-sheet-select')?.value || null;
+    const hiddenCols = [...document.querySelectorAll('.sheet-col-check')].filter(c => !c.checked).map(c => c.value);
+    widget.sheetHiddenCols    = hiddenCols;
+    widget.sheetFilterCol     = document.getElementById('widget-sheet-filtercol')?.value || '';
+    widget.sheetFilterValue   = document.getElementById('widget-sheet-filterval')?.value || '';
+    widget.sheetHideEmptyRows = !!document.getElementById('widget-sheet-hideempty')?.checked;
     delete widget.metrics; delete widget.platform;
   } else {
     const checked = [...document.querySelectorAll('#widget-editor-fields input[type=checkbox]:checked')].map(c => c.value);
