@@ -8,6 +8,7 @@ const crypto   = require('crypto');
 const { Pool } = require('pg');
 const bcrypt   = require('bcryptjs');
 const session  = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
 const sheetsApi = require('./sheets');
 const promotionApi = require('./promotion');
 
@@ -107,12 +108,19 @@ function hashPassword(pw) {
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
+// Let op: zonder een 'store' bewaart express-session in het procesgeheugen
+// (MemoryStore). Op Vercel draait elke request mogelijk in een andere/nieuwe
+// serverless-instance, dus dat geheugen wordt niet gedeeld — je werd dan
+// steeds random uitgelogd. Met DATABASE_URL bewaren we sessies daarom in
+// Postgres (dezelfde DB als de instellingen), zodat inloggen ook echt blijft
+// hangen tussen requests/instances.
 app.use(express.json());
 app.use(session({
+  store: authDb ? new pgSession({ pool: authDb, tableName: 'rapportage_session', createTableIfMissing: true }) : undefined,
   secret: process.env.SESSION_SECRET || 'rapportage-dev-secret-change-in-prod',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax' },
+  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax', secure: IS_VERCEL },
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
