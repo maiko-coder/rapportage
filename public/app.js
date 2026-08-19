@@ -1261,7 +1261,7 @@ async function renderWidgetDemographics(widget) {
         return;
       }
       const canvasId = `w-demo-canvas-${widget.id}-${dim}`;
-      target.innerHTML = `<canvas id="${canvasId}"></canvas>`;
+      target.innerHTML = `<div class="demo-pie-canvas-wrap"><canvas id="${canvasId}"></canvas></div>${renderPieLegendHtml(grouped, unit)}`;
       makePieChart(canvasId, grouped, unit);
     } catch (err) {
       target.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
@@ -1300,6 +1300,24 @@ function groupDemographicsRows(rows, dim, metric) {
     .sort((a, b) => b.value - a.value);
 }
 
+// Legende wordt als losse HTML onder de taart getekend i.p.v. via Chart.js'
+// eigen legend-plugin. Reden: Chart.js verdeelt de ruimte binnen het canvas
+// zelf tussen taart en legende, dus bij een wisselend aantal items (3 vs 6
+// segmenten) werd de taart-cirkel bij elke widget een ander formaat — met een
+// losse HTML-legende blijft de cirkel altijd exact even groot.
+function renderPieLegendHtml(data, unit) {
+  const total = data.reduce((sum, d) => sum + d.value, 0);
+  return `<div class="demo-pie-legend">${data.map((d, i) => {
+    const pct = total > 0 ? (d.value / total * 100).toFixed(1) : '0';
+    const color = CHART_PALETTE[i % CHART_PALETTE.length];
+    return `<div class="demo-pie-legend-item">
+      <span class="demo-pie-legend-dot" style="background:${color}"></span>
+      <span class="demo-pie-legend-label" title="${escapeHtml(d.label)}">${escapeHtml(d.label)}</span>
+      <span class="demo-pie-legend-pct">${pct}%</span>
+    </div>`;
+  }).join('')}</div>`;
+}
+
 function makePieChart(canvasId, data, unit) {
   destroyChart(canvasId);
   const ctxEl = document.getElementById(canvasId)?.getContext('2d');
@@ -1312,12 +1330,9 @@ function makePieChart(canvasId, data, unit) {
       datasets: [{ data: data.map(d => d.value), backgroundColor: CHART_PALETTE, borderWidth: 0, borderRadius: 2 }],
     },
     options: {
-      responsive: true, maintainAspectRatio: true, aspectRatio: 1.25,
+      responsive: true, maintainAspectRatio: true, aspectRatio: 1,
       plugins: {
-        legend: {
-          position: 'bottom',
-          labels: { usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7, font: { size: 10.5, family: "'Inter', sans-serif", weight: '500' }, color: '#1c1b1a', padding: 8 },
-        },
+        legend: { display: false },
         tooltip: {
           backgroundColor: '#1c1b1a', titleFont: { size: 12, family: "'Inter', sans-serif", weight: '600' }, bodyFont: { size: 12, family: "'Inter', sans-serif" },
           padding: 10, cornerRadius: 8, boxPadding: 4, usePointStyle: true, borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1,
