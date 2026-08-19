@@ -114,6 +114,11 @@ function hashPassword(pw) {
 // steeds random uitgelogd. Met DATABASE_URL bewaren we sessies daarom in
 // Postgres (dezelfde DB als de instellingen), zodat inloggen ook echt blijft
 // hangen tussen requests/instances.
+// Vercel termineert TLS vóór onze Node-functie — zonder 'trust proxy' denkt
+// Express dat elk request plain HTTP is. Nodig voor cookie.secure:'auto' (en
+// voor correcte req.ip/https-detectie in het algemeen achter een proxy).
+app.set('trust proxy', 1);
+
 let lastSessionStoreError = null;
 app.use(express.json());
 app.use(session({
@@ -129,7 +134,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'rapportage-dev-secret-change-in-prod',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax', secure: IS_VERCEL },
+  proxy: IS_VERCEL,
+  // 'auto' i.p.v. een hard true/false: zet Secure alleen als het request via
+  // https binnenkomt (via trust proxy + X-Forwarded-Proto). Een hardcoded
+  // 'true' kan op sommige serverless-proxysetups de cookie laten weigeren
+  // wanneer Express het onderliggende request niet als https herkent.
+  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax', secure: 'auto' },
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
