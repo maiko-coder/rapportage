@@ -7,8 +7,7 @@ const fs       = require('fs');
 const crypto   = require('crypto');
 const { Pool } = require('pg');
 const bcrypt   = require('bcryptjs');
-const session  = require('express-session');
-const pgSession = require('connect-pg-simple')(session);
+const cookieSession = require('cookie-session');
 const sheetsApi = require('./sheets');
 const promotionApi = require('./promotion');
 
@@ -108,38 +107,25 @@ function hashPassword(pw) {
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-// Let op: zonder een 'store' bewaart express-session in het procesgeheugen
-// (MemoryStore). Op Vercel draait elke request mogelijk in een andere/nieuwe
-// serverless-instance, dus dat geheugen wordt niet gedeeld — je werd dan
-// steeds random uitgelogd. Met DATABASE_URL bewaren we sessies daarom in
-// Postgres (dezelfde DB als de instellingen), zodat inloggen ook echt blijft
-// hangen tussen requests/instances.
-// Vercel termineert TLS vóór onze Node-functie — zonder 'trust proxy' denkt
-// Express dat elk request plain HTTP is. Nodig voor cookie.secure:'auto' (en
-// voor correcte req.ip/https-detectie in het algemeen achter een proxy).
+// We probeerden eerst express-session met een Postgres-store, maar bleven op
+// Vercel toch uitgelogd raken — het exacte omgevingsdetail waarom is van
+// buitenaf niet te reproduceren. In plaats van verder te blijven gokken op een
+// server-side store (DB-tabel, timing van async writes, connectielimieten),
+// bewaren we de sessie nu volledig stateless in de cookie zelf (ondertekend,
+// niet aanpasbaar door de gebruiker). Geen database-roundtrip, geen timing-
+// gevoelige save() nodig — de payload (userId/email/name) is klein genoeg
+// (ruim onder de 4KB cookie-limiet) en dit soort setup is de standaard,
+// bewezen aanpak voor sessies op serverless platforms zoals Vercel.
 app.set('trust proxy', 1);
 
-let lastSessionStoreError = null;
 app.use(express.json());
-app.use(session({
-  store: authDb ? new pgSession({
-    pool: authDb,
-    tableName: 'rapportage_session',
-    createTableIfMissing: true,
-    errorLog: (...args) => {
-      lastSessionStoreError = args.map(a => (a instanceof Error ? a.message : String(a))).join(' ');
-      console.error('[session store]', ...args);
-    },
-  }) : undefined,
-  secret: process.env.SESSION_SECRET || 'rapportage-dev-secret-change-in-prod',
-  resave: false,
-  saveUninitialized: false,
-  proxy: IS_VERCEL,
-  // 'auto' i.p.v. een hard true/false: zet Secure alleen als het request via
-  // https binnenkomt (via trust proxy + X-Forwarded-Proto). Een hardcoded
-  // 'true' kan op sommige serverless-proxysetups de cookie laten weigeren
-  // wanneer Express het onderliggende request niet als https herkent.
-  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax', secure: 'auto' },
+app.use(cookieSession({
+  name: 'session',
+  keys: [process.env.SESSION_SECRET || 'rapportage-dev-secret-change-in-prod'],
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: IS_VERCEL,
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -177,18 +163,7 @@ app.post('/api/login', async (req, res) => {
     req.session.userId = user.id;
     req.session.email  = user.email;
     req.session.name   = user.name;
-    // Expliciet opslaan (i.p.v. vertrouwen op express-session's impliciete
-    // res.end-hook) en pas dan antwoorden — op serverless (Vercel) kan de
-    // functie anders al klaar zijn voordat de async sessie-write naar
-    // Postgres is voltooid, waardoor de net ingelogde gebruiker alsnog
-    // "uitgelogd" lijkt op de volgende request.
-    req.session.save(err => {
-      if (err) {
-        console.error('Session save error bij login:', err.message);
-        return res.status(500).json({ error: 'Inloggen mislukt (sessie kon niet worden opgeslagen).' });
-      }
-      res.json({ ok: true, name: user.name });
-    });
+    res.json({ ok: true, name: user.name });
   } catch (err) {
     console.error('Login error:', err.message);
     res.status(500).json({ error: 'Inloggen mislukt. Probeer opnieuw.' });
@@ -197,7 +172,8 @@ app.post('/api/login', async (req, res) => {
 
 // ─── API: logout ─────────────────────────────────────────────────────────────
 app.post('/api/logout', (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
+  req.session = null; // cookie-session heeft geen .destroy() — zo wist je 'm
+  res.json({ ok: true });
 });
 
 // ─── API: current session ─────────────────────────────────────────────────────
@@ -217,10 +193,8 @@ app.get('/api/debug/session-status', (req, res) => {
   res.json({
     hasAuthDb: !!authDb,
     cookieHeaderPresent: !!req.headers.cookie,
-    sessionId: req.sessionID || null,
     hasUserId: !!req.session?.userId,
     userEmail: req.session?.email || null,
-    lastSessionStoreError,
   });
 });
 
