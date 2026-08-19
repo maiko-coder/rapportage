@@ -1262,7 +1262,7 @@ async function renderWidgetDemographics(widget) {
       }
       const canvasId = `w-demo-canvas-${widget.id}-${dim}`;
       target.innerHTML = `<div class="demo-pie-canvas-wrap"><canvas id="${canvasId}"></canvas></div>${renderPieLegendHtml(grouped, unit)}`;
-      makePieChart(canvasId, grouped, unit);
+      makePieChart(canvasId, grouped);
     } catch (err) {
       target.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
     }
@@ -1310,19 +1310,22 @@ function renderPieLegendHtml(data, unit) {
   return `<div class="demo-pie-legend">${data.map((d, i) => {
     const pct = total > 0 ? (d.value / total * 100).toFixed(1) : '0';
     const color = CHART_PALETTE[i % CHART_PALETTE.length];
-    return `<div class="demo-pie-legend-item">
+    // Volledig label + waarde staan in de title-attribute (native browser-
+    // tooltip) i.p.v. een eigen overlay — die kan nooit afsnijden zoals de
+    // Chart.js-tooltip dat in zo'n klein canvas deed.
+    const fullTitle = `${d.label}: ${fmt(d.value, unit)} (${pct}%)`;
+    return `<div class="demo-pie-legend-item" title="${escapeHtml(fullTitle)}">
       <span class="demo-pie-legend-dot" style="background:${color}"></span>
-      <span class="demo-pie-legend-label" title="${escapeHtml(d.label)}">${escapeHtml(d.label)}</span>
+      <span class="demo-pie-legend-label">${escapeHtml(d.label)}</span>
       <span class="demo-pie-legend-pct">${pct}%</span>
     </div>`;
   }).join('')}</div>`;
 }
 
-function makePieChart(canvasId, data, unit) {
+function makePieChart(canvasId, data) {
   destroyChart(canvasId);
   const ctxEl = document.getElementById(canvasId)?.getContext('2d');
   if (!ctxEl) return;
-  const total = data.reduce((sum, d) => sum + d.value, 0);
   charts[canvasId] = new Chart(ctxEl, {
     type: 'doughnut',
     data: {
@@ -1331,19 +1334,11 @@ function makePieChart(canvasId, data, unit) {
     },
     options: {
       responsive: true, maintainAspectRatio: true, aspectRatio: 1,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1c1b1a', titleFont: { size: 12, family: "'Inter', sans-serif", weight: '600' }, bodyFont: { size: 12, family: "'Inter', sans-serif" },
-          padding: 10, cornerRadius: 8, boxPadding: 4, usePointStyle: true, borderColor: 'rgba(255,255,255,0.08)', borderWidth: 1,
-          callbacks: {
-            label: c => {
-              const pct = total > 0 ? (c.parsed / total * 100).toFixed(1) : '0';
-              return ` ${c.label}: ${fmt(c.parsed, unit)} (${pct}%)`;
-            },
-          },
-        },
-      },
+      // Legende én tooltip staan uit: bij zo'n klein, vast formaat (148px)
+      // sneed Chart.js' eigen tooltip-overlay af zodra een label te lang was.
+      // Label + percentage staan al permanent in de HTML-legende hieronder,
+      // dus een hover-tooltip is toch overbodig.
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
     },
   });
 }
