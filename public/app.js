@@ -70,6 +70,18 @@ function getPeriodApiDateRange(value) {
   return { preset: 'custom', start: r.start, end: r.end };
 }
 
+// Zelfde periode vorig jaar: kalenderjaar -1, zelfde maand/dag. Randgeval 29 feb
+// in een niet-schrikkeljaar bestaat simpelweg niet en levert dan geen data op.
+function shiftIsoDateYears(iso, years) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${y + years}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function previousYearDateRange(dateRange) {
+  if (!dateRange?.start || !dateRange?.end) return null;
+  return { preset: 'custom', start: shiftIsoDateYears(dateRange.start, -1), end: shiftIsoDateYears(dateRange.end, -1) };
+}
+
 function fmtDisplayDate(iso) {
   if (!iso) return '';
   const [,m,d] = iso.split('-');
@@ -400,6 +412,7 @@ function fmt(n, type) {
   if (type === 'eur')  return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
   if (type === 'eur2') return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
   if (type === 'pct')  return v.toFixed(2) + '%';
+  if (type === 'ratio') return v.toFixed(2).replace('.', ',') + 'x';
   return new Intl.NumberFormat('nl-NL').format(Math.round(v));
 }
 
@@ -516,7 +529,8 @@ async function loadMeta(client, dateRange) {
     integration_id: 'facebook_ads', connection_key: client.meta.connection_key,
     account_id: client.meta.account_id,
     settings: { attribution_window: 'ATTRIBUTION_MODEL_VIEW_CLICK###VIEW_ATTRIBUTION_WINDOW_1D###CLICK_ATTRIBUTION_WINDOW_7D' },
-    fields: ['day', 'campaign_name', 'impressions', 'clicks', 'spend', 'cpc'],
+    fields: ['day', 'campaign_name', 'impressions', 'clicks', 'spend', 'cpc', 'reach',
+      'actions:omni_purchase', 'action_values:omni_purchase', 'actions:link_click', 'actions:post_engagement'],
     date_range: dateRange, limit: 500,
   });
   return d.data?.rows || [];
@@ -527,7 +541,8 @@ async function loadGoogle(client, dateRange) {
   const d = await apiPost('/api/query', {
     integration_id: 'google_ads', connection_key: client.google.connection_key,
     account_id: client.google.account_id, data_view: client.google.data_view || 'campaign',
-    fields: ['segments.date', 'campaign.name', 'metrics.impressions', 'metrics.clicks', 'metrics.cost_micros'],
+    fields: ['segments.date', 'campaign.name', 'metrics.impressions', 'metrics.clicks', 'metrics.cost_micros',
+      'metrics.conversions', 'metrics.conversions_value', 'metrics.all_conversions', 'metrics.interactions'],
     date_range: dateRange, limit: 500,
   });
   return d.data?.rows || [];
@@ -543,7 +558,8 @@ async function loadPinterest(client, dateRange) {
     integration_id: 'pinterest_ads', connection_key: client.pinterest.connection_key,
     account_id: client.pinterest.account_id, data_view: client.pinterest.data_view || 'campaign',
     settings: { click_window: '30', view_window: '1', engagement_window: '30', conversion_report_time: 'TIME_OF_AD_ACTION' },
-    fields: ['DAY', 'CAMPAIGN_NAME', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR', 'ECPC_IN_DOLLAR'],
+    fields: ['DAY', 'CAMPAIGN_NAME', 'IMPRESSION_1', 'OUTBOUND_CLICK_1', 'SPEND_IN_DOLLAR', 'ECPC_IN_DOLLAR',
+      'TOTAL_CONVERSIONS', 'SAVES_CM', 'ENGAGEMENTS_CM', 'TOTAL_IMPRESSION_USER', 'TOTAL_CHECKOUT_VALUE_IN_MICRO_DOLLAR'],
     date_range: { preset: 'custom', ...clipped }, limit: 2000,
   });
   return d.data?.rows || [];
@@ -592,18 +608,59 @@ const PLATFORM_META = {
   total:     { label: 'Totaal' },
 };
 
-function emptyPlatformTotals() { return { spend: 0, clicks: 0, impressions: 0 }; }
+// Alle velden die per platform worden opgeteld. "total" wordt hier automatisch
+// van afgeleid (som over meta+google+pinterest) — een nieuw veld toevoegen aan
+// een platform-som telt dus vanzelf ook mee in het "Totaal"-platform.
+function emptyPlatformTotals() {
+  return {
+    spend: 0, clicks: 0, impressions: 0,
+    conversions: 0, conversionsValue: 0, engagements: 0, reach: 0,
+    linkClicks: 0, allConversions: 0, saves: 0,
+  };
+}
 
-function addMetaRow(t, r)      { t.spend += parseFloat(r.spend || 0); t.clicks += parseFloat(r.clicks || 0); t.impressions += parseFloat(r.impressions || 0); }
-function addGoogleRow(t, r)    { t.spend += micros(r['metrics.cost_micros']); t.clicks += parseFloat(r['metrics.clicks'] || 0); t.impressions += parseFloat(r['metrics.impressions'] || 0); }
-function addPinterestRow(t, r) { t.spend += parseFloat(r.SPEND_IN_DOLLAR || 0); t.clicks += parseFloat(r.OUTBOUND_CLICK_1 || 0); t.impressions += parseFloat(r.IMPRESSION_1 || 0); }
+function combinePlatformTotals(...parts) {
+  const total = emptyPlatformTotals();
+  Object.keys(total).forEach(k => { total[k] = parts.reduce((sum, p) => sum + (p?.[k] || 0), 0); });
+  return total;
+}
+
+function addMetaRow(t, r) {
+  t.spend += parseFloat(r.spend || 0);
+  t.clicks += parseFloat(r.clicks || 0);
+  t.impressions += parseFloat(r.impressions || 0);
+  t.reach += parseFloat(r.reach || 0);
+  t.conversions += parseFloat(r['actions:omni_purchase'] || 0);
+  t.conversionsValue += parseFloat(r['action_values:omni_purchase'] || 0);
+  t.linkClicks += parseFloat(r['actions:link_click'] || 0);
+  t.engagements += parseFloat(r['actions:post_engagement'] || 0);
+}
+function addGoogleRow(t, r) {
+  t.spend += micros(r['metrics.cost_micros']);
+  t.clicks += parseFloat(r['metrics.clicks'] || 0);
+  t.impressions += parseFloat(r['metrics.impressions'] || 0);
+  t.conversions += parseFloat(r['metrics.conversions'] || 0);
+  t.conversionsValue += parseFloat(r['metrics.conversions_value'] || 0);
+  t.allConversions += parseFloat(r['metrics.all_conversions'] || 0);
+  t.engagements += parseFloat(r['metrics.interactions'] || 0);
+}
+function addPinterestRow(t, r) {
+  t.spend += parseFloat(r.SPEND_IN_DOLLAR || 0);
+  t.clicks += parseFloat(r.OUTBOUND_CLICK_1 || 0);
+  t.impressions += parseFloat(r.IMPRESSION_1 || 0);
+  t.reach += parseFloat(r.TOTAL_IMPRESSION_USER || 0);
+  t.conversions += parseFloat(r.TOTAL_CONVERSIONS || 0);
+  t.conversionsValue += parseFloat(r.TOTAL_CHECKOUT_VALUE_IN_MICRO_DOLLAR || 0) / 1e6;
+  t.saves += parseFloat(r.SAVES_CM || 0);
+  t.engagements += parseFloat(r.ENGAGEMENTS_CM || 0);
+}
 
 function aggregateTotals(metaRows, googleRows, pintRows) {
   const meta = emptyPlatformTotals(), google = emptyPlatformTotals(), pinterest = emptyPlatformTotals();
   metaRows.forEach(r => addMetaRow(meta, r));
   googleRows.forEach(r => addGoogleRow(google, r));
   pintRows.forEach(r => addPinterestRow(pinterest, r));
-  const total = { spend: meta.spend + google.spend + pinterest.spend, clicks: meta.clicks + google.clicks + pinterest.clicks, impressions: meta.impressions + google.impressions + pinterest.impressions };
+  const total = combinePlatformTotals(meta, google, pinterest);
   return { meta, google, pinterest, total };
 }
 
@@ -616,10 +673,24 @@ function buildDailySeries(metaRows, googleRows, pintRows) {
   const days = Object.keys(byDay).sort();
   days.forEach(d => {
     const e = byDay[d];
-    e.total = { spend: e.meta.spend + e.google.spend + e.pinterest.spend, clicks: e.meta.clicks + e.google.clicks + e.pinterest.clicks, impressions: e.meta.impressions + e.google.impressions + e.pinterest.impressions };
+    e.total = combinePlatformTotals(e.meta, e.google, e.pinterest);
   });
   return { days, byDay };
 }
+
+// Extra metrics naast de basisset (spend/clicks/impressions/ctr/cpc/cpm). Deze
+// staan in de widget-editor achter een "+ Meer metrics toevoegen" dropdown per
+// platform, zodat de basislijst overzichtelijk blijft. `platforms` bepaalt voor
+// welke platformen (incl. eventueel "total") deze metric zinvol/beschikbaar is.
+const EXTRA_METRIC_DEFS = [
+  { key: 'conversions',      shortLabel: 'Conversies',        unit: 'count', platforms: ['meta', 'google', 'pinterest', 'total'] },
+  { key: 'conversionsValue', shortLabel: 'Conversiewaarde',   unit: 'eur',   platforms: ['meta', 'google', 'pinterest', 'total'] },
+  { key: 'engagements',      shortLabel: 'Interacties',       unit: 'count', platforms: ['meta', 'google', 'pinterest', 'total'] },
+  { key: 'reach',            shortLabel: 'Bereik',            unit: 'count', platforms: ['meta', 'pinterest', 'total'] },
+  { key: 'linkClicks',       shortLabel: 'Linkclicks',        unit: 'count', platforms: ['meta'] },
+  { key: 'allConversions',   shortLabel: 'Alle conversies (incl. view-through)', unit: 'count', platforms: ['google'] },
+  { key: 'saves',            shortLabel: 'Saves',             unit: 'count', platforms: ['pinterest'] },
+];
 
 function buildMetricCatalog() {
   const metrics = [];
@@ -640,6 +711,19 @@ function buildMetricCatalog() {
     metrics.push({ id: `${p}.cpm`,         platform: p, shortLabel: 'CPM',        label: `${pl} — CPM`,        unit: 'eur2',
       daily: d => d[p].impressions > 0 ? d[p].spend / d[p].impressions * 1000 : null,
       total: t => t[p].impressions > 0 ? t[p].spend / t[p].impressions * 1000 : 0 });
+  });
+  EXTRA_METRIC_DEFS.forEach(def => {
+    def.platforms.forEach(p => {
+      const pl = PLATFORM_META[p].label;
+      metrics.push({ id: `${p}.${def.key}`, platform: p, shortLabel: def.shortLabel, label: `${pl} — ${def.shortLabel}`, unit: def.unit, extra: true,
+        daily: d => d[p][def.key], total: t => t[p][def.key] });
+    });
+  });
+  ['meta', 'google', 'pinterest', 'total'].forEach(p => {
+    const pl = PLATFORM_META[p].label;
+    metrics.push({ id: `${p}.roas`, platform: p, shortLabel: 'ROAS', label: `${pl} — ROAS`, unit: 'ratio', extra: true,
+      daily: d => d[p].spend > 0 ? d[p].conversionsValue / d[p].spend : null,
+      total: t => t[p].spend > 0 ? t[p].conversionsValue / t[p].spend : 0 });
   });
   return metrics;
 }
@@ -832,6 +916,31 @@ async function loadSheetColumnOptions(linkId, widget) {
   }
 }
 
+// ─── Vergelijking met vorig jaar (onder de widget-titel) ─────────────────────
+function formatYoyDelta(current, previous) {
+  const cur = current || 0, prev = previous || 0;
+  if (!prev) {
+    if (!cur) return { text: '—', cls: '' };
+    return { text: 'nieuw t.o.v. vorig jaar', cls: 'wc-up' };
+  }
+  const pct = (cur - prev) / Math.abs(prev) * 100;
+  if (Math.abs(pct) < 0.05) return { text: '± 0%', cls: '' };
+  const arrow = pct > 0 ? '▲' : '▼';
+  const cls   = pct > 0 ? 'wc-up' : 'wc-down';
+  return { text: `${arrow} ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`, cls };
+}
+
+function widgetCompareHtml(widget, ctx) {
+  if (!widget.compareYoy) return '';
+  const metrics = (widget.metrics || []).map(getMetric).filter(Boolean);
+  if (!metrics.length || !ctx?.previousYearTotals) return '';
+  const parts = metrics.map(m => {
+    const d = formatYoyDelta(m.total(ctx.totals), m.total(ctx.previousYearTotals));
+    return `<span class="${d.cls}">${escapeHtml(m.shortLabel)} ${d.text}</span>`;
+  });
+  return `<span class="widget-compare">t.o.v. vorig jaar: ${parts.join(' · ')}</span>`;
+}
+
 function defaultWidgetTitle(widget) {
   if (widget.type === 'yearly') return 'Maandoverzicht dit jaar';
   if (widget.type === 'table')  return `Campagnes — ${PLATFORM_META[widget.platform]?.label || widget.platform}`;
@@ -983,10 +1092,14 @@ function buildWidgetElement(widget, ctx, pageKey) {
   else bodyHtml = '';
 
   const showEditBtn = widget.type !== 'yearly';
+  const compareHtml = (widget.type === 'kpi' || widget.type === 'chart') ? widgetCompareHtml(widget, ctx) : '';
   wrap.innerHTML = `
     <div class="widget-header">
       <span class="widget-drag-handle edit-only" title="Verplaatsen">${ICON_GRIP}</span>
-      <span class="widget-title">${escapeHtml(widget.title || defaultWidgetTitle(widget))}</span>
+      <div class="widget-title-wrap">
+        <span class="widget-title">${escapeHtml(widget.title || defaultWidgetTitle(widget))}</span>
+        ${compareHtml}
+      </div>
       <span class="widget-toolbar-actions edit-only">
         ${showEditBtn ? `<button class="widget-icon-btn" onclick="openWidgetEditor('${pageKey}','${widget.id}')" title="Bewerken">${ICON_PENCIL}</button>` : ''}
         <button class="widget-icon-btn widget-icon-danger" onclick="removeWidget('${pageKey}','${widget.id}')" title="Verwijderen">${ICON_TRASH}</button>
@@ -1097,16 +1210,55 @@ function renderWidgetEditorFields(type, widget) {
     </label>`;
     return;
   }
-  // kpi / chart: metric checklist grouped by platform
+  // kpi / chart: metric checklist grouped by platform, plus een dropdown per
+  // platform om verder te putten uit alle overige beschikbare metrics.
   const selected = new Set(widget?.metrics || []);
   const groups = availableMetricGroups();
-  el.innerHTML = `<div class="settings-label" style="margin-bottom:6px;">Metrics</div>` + groups.map(g => `
-    <div class="metric-group">
+  el.innerHTML = `<div class="settings-label" style="margin-bottom:6px;">Metrics</div>` +
+    groups.map(g => renderMetricGroupHtml(g, selected)).join('') +
+    `<label class="settings-toggle-label" style="margin-top:12px;">
+      <input type="checkbox" id="widget-compare-yoy" ${widget?.compareYoy ? 'checked' : ''}/>
+      Vergelijk met dezelfde periode vorig jaar
+    </label>
+    <p class="widget-editor-hint">De vergelijking wordt onder de widgettitel getoond (bv. "▲ +12,4%"). Let op: Pinterest levert door een limiet van de Pinterest API geen data van meer dan 90 dagen terug, dus die vergelijking blijft daar leeg.</p>`;
+}
+
+function renderMetricGroupHtml(g, selectedIds) {
+  const baseMetrics    = g.metrics.filter(m => !m.extra);
+  const selectedExtra  = g.metrics.filter(m => m.extra && selectedIds.has(m.id));
+  const availableExtra = g.metrics.filter(m => m.extra && !selectedIds.has(m.id));
+  return `
+    <div class="metric-group" data-platform="${g.platform}">
       <div class="metric-group-title">${g.label}</div>
       <div class="metric-checklist">
-        ${g.metrics.map(m => `<label class="metric-check"><input type="checkbox" value="${m.id}" ${selected.has(m.id)?'checked':''}/> ${m.shortLabel}</label>`).join('')}
+        ${baseMetrics.map(m => `<label class="metric-check"><input type="checkbox" value="${m.id}" ${selectedIds.has(m.id)?'checked':''}/> ${escapeHtml(m.shortLabel)}</label>`).join('')}
+        ${selectedExtra.map(m => `<label class="metric-check metric-check-extra"><input type="checkbox" value="${m.id}" checked/> ${escapeHtml(m.shortLabel)} <button type="button" class="metric-remove-btn" title="Verwijderen" onclick="this.closest('label').remove()">×</button></label>`).join('')}
       </div>
-    </div>`).join('');
+      ${availableExtra.length ? `
+      <div class="metric-more-row">
+        <select class="metric-more-select" onchange="onAddExtraMetric(this)">
+          <option value="">+ Meer metrics toevoegen…</option>
+          ${availableExtra.map(m => `<option value="${m.id}">${escapeHtml(m.shortLabel)}</option>`).join('')}
+        </select>
+      </div>` : ''}
+    </div>`;
+}
+
+function onAddExtraMetric(selectEl) {
+  const id = selectEl.value;
+  if (!id) return;
+  const m = getMetric(id);
+  if (!m) return;
+  const checklist = selectEl.closest('.metric-group')?.querySelector('.metric-checklist');
+  if (checklist) {
+    const label = document.createElement('label');
+    label.className = 'metric-check metric-check-extra';
+    label.innerHTML = `<input type="checkbox" value="${m.id}" checked/> ${escapeHtml(m.shortLabel)} <button type="button" class="metric-remove-btn" title="Verwijderen">×</button>`;
+    label.querySelector('.metric-remove-btn').addEventListener('click', () => label.remove());
+    checklist.appendChild(label);
+  }
+  selectEl.querySelector(`option[value="${CSS.escape(id)}"]`)?.remove();
+  selectEl.value = '';
 }
 
 function saveWidgetFromEditor() {
@@ -1125,9 +1277,9 @@ function saveWidgetFromEditor() {
 
   if (type === 'table') {
     widget.platform = document.getElementById('widget-platform-select')?.value || availablePlatforms()[0] || 'meta';
-    delete widget.metrics; delete widget.sheetLinkId;
+    delete widget.metrics; delete widget.sheetLinkId; delete widget.compareYoy;
   } else if (type === 'yearly') {
-    delete widget.metrics; delete widget.platform; delete widget.sheetLinkId;
+    delete widget.metrics; delete widget.platform; delete widget.sheetLinkId; delete widget.compareYoy;
   } else if (type === 'sheet') {
     widget.sheetLinkId = document.getElementById('widget-sheet-select')?.value || null;
     const hiddenCols = [...document.querySelectorAll('.sheet-col-check')].filter(c => !c.checked).map(c => c.value);
@@ -1136,10 +1288,11 @@ function saveWidgetFromEditor() {
     widget.sheetFilterOp      = document.getElementById('widget-sheet-filterop')?.value || 'eq';
     widget.sheetFilterValue   = document.getElementById('widget-sheet-filterval')?.value?.trim() || '';
     widget.sheetHideEmptyRows = !!document.getElementById('widget-sheet-hideempty')?.checked;
-    delete widget.metrics; delete widget.platform;
+    delete widget.metrics; delete widget.platform; delete widget.compareYoy;
   } else {
-    const checked = [...document.querySelectorAll('#widget-editor-fields input[type=checkbox]:checked')].map(c => c.value);
-    widget.metrics = checked;
+    const checked = [...document.querySelectorAll('#widget-editor-fields .metric-checklist input[type=checkbox]:checked')].map(c => c.value);
+    widget.metrics = [...new Set(checked)];
+    widget.compareYoy = !!document.getElementById('widget-compare-yoy')?.checked;
     delete widget.platform; delete widget.sheetLinkId;
   }
 
@@ -1284,11 +1437,13 @@ async function loadReport(forcedClientId) {
   const dateRange     = getPeriodApiDateRange();
   const yd            = computePeriodDates('thisyear');
   const yearDateRange = yd ? { preset: 'custom', start: yd.start, end: yd.end } : dateRange;
+  const prevYearRange = previousYearDateRange(dateRange);
 
   try {
-    const [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear] = await Promise.allSettled([
+    const [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear, metaPrev, googlePrev, pintPrev] = await Promise.allSettled([
       loadMeta(client, dateRange), loadGoogle(client, dateRange), loadPinterest(client, dateRange),
       loadMeta(client, yearDateRange), loadGoogle(client, yearDateRange), loadPinterestYearly(client, yearDateRange),
+      loadMeta(client, prevYearRange), loadGoogle(client, prevYearRange), loadPinterest(client, prevYearRange),
     ]);
 
     const ok = r => r.status === 'fulfilled' ? r.value : [];
@@ -1298,6 +1453,9 @@ async function loadReport(forcedClientId) {
     const allLabels  = ['Meta', 'Google', 'Pinterest', 'Meta (jaar)', 'Google (jaar)', 'Pinterest (jaar)'];
     const errs = allResults.map((r,i)=>r.status==='rejected'?allLabels[i]+': '+r.reason?.message:null).filter(Boolean);
     if (errs.length) showError(errs.join(' | '));
+    // Fouten bij het ophalen van "vorig jaar" (bv. Pinterest, dat > 90 dagen terug
+    // toch al niets teruggeeft) tellen niet als harde fout — de vergelijking valt
+    // dan simpelweg terug op "n.b." in de widget.
 
     const periodInfo  = computePeriodDates(selectedPeriod);
     const periodLabel = selectedPeriod==='custom' ? `${fmtDisplayDate(customStartDate)} – ${fmtDisplayDate(customEndDate)}` : (PERIODS.find(p=>p.value===selectedPeriod)?.label||selectedPeriod);
@@ -1308,6 +1466,7 @@ async function loadReport(forcedClientId) {
     currentReportCtx = {
       seriesData: buildDailySeries(metaRows, googleRows, pintRows),
       totals: aggregateTotals(metaRows, googleRows, pintRows),
+      previousYearTotals: aggregateTotals(ok(metaPrev), ok(googlePrev), ok(pintPrev)),
       campaignBreakdown: {
         meta: buildCampaignBreakdown('meta', metaRows),
         google: buildCampaignBreakdown('google', googleRows),
