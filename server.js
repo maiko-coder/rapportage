@@ -167,7 +167,18 @@ app.post('/api/login', async (req, res) => {
     req.session.userId = user.id;
     req.session.email  = user.email;
     req.session.name   = user.name;
-    res.json({ ok: true, name: user.name });
+    // Expliciet opslaan (i.p.v. vertrouwen op express-session's impliciete
+    // res.end-hook) en pas dan antwoorden — op serverless (Vercel) kan de
+    // functie anders al klaar zijn voordat de async sessie-write naar
+    // Postgres is voltooid, waardoor de net ingelogde gebruiker alsnog
+    // "uitgelogd" lijkt op de volgende request.
+    req.session.save(err => {
+      if (err) {
+        console.error('Session save error bij login:', err.message);
+        return res.status(500).json({ error: 'Inloggen mislukt (sessie kon niet worden opgeslagen).' });
+      }
+      res.json({ ok: true, name: user.name });
+    });
   } catch (err) {
     console.error('Login error:', err.message);
     res.status(500).json({ error: 'Inloggen mislukt. Probeer opnieuw.' });
