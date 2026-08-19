@@ -996,24 +996,13 @@ function formatYoyDelta(current, previous) {
   const cur = current || 0, prev = previous || 0;
   if (!prev) {
     if (!cur) return { text: '—', cls: '' };
-    return { text: 'nieuw t.o.v. vorig jaar', cls: 'wc-up' };
+    return { text: 'nieuw', cls: 'wc-up' };
   }
   const pct = (cur - prev) / Math.abs(prev) * 100;
   if (Math.abs(pct) < 0.05) return { text: '± 0%', cls: '' };
   const arrow = pct > 0 ? '▲' : '▼';
   const cls   = pct > 0 ? 'wc-up' : 'wc-down';
   return { text: `${arrow} ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`, cls };
-}
-
-function widgetCompareHtml(widget, ctx) {
-  if (!widget.compareYoy) return '';
-  const metrics = (widget.metrics || []).map(getMetric).filter(Boolean);
-  if (!metrics.length || !ctx?.previousYearTotals) return '';
-  const parts = metrics.map(m => {
-    const d = formatYoyDelta(m.total(ctx.totals), m.total(ctx.previousYearTotals));
-    return `<span class="${d.cls}">${escapeHtml(m.shortLabel)} ${d.text}</span>`;
-  });
-  return `<span class="widget-compare">t.o.v. vorig jaar: ${parts.join(' · ')}</span>`;
 }
 
 function defaultWidgetTitle(widget) {
@@ -1032,7 +1021,15 @@ function defaultWidgetTitle(widget) {
 function renderWidgetKpiHtml(widget, ctx) {
   const metrics = (widget.metrics || []).map(getMetric).filter(Boolean);
   if (!metrics.length) return `<p class="widget-empty">Geen metrics gekozen. Klik op ✎ om deze widget te bewerken.</p>`;
-  return `<div class="kpi-strip">${metrics.map(m => `<div class="kpi-card"><div class="kpi-label">${m.label}</div><div class="kpi-value">${fmtByUnit(m.total(ctx.totals), m.unit)}</div></div>`).join('')}</div>`;
+  const showCompare = !!widget.compareYoy && !!ctx?.previousYearTotals;
+  return `<div class="kpi-strip">${metrics.map(m => {
+    const compare = showCompare ? formatYoyDelta(m.total(ctx.totals), m.total(ctx.previousYearTotals)) : null;
+    return `<div class="kpi-card">
+      <div class="kpi-label">${m.label}</div>
+      <div class="kpi-value">${fmtByUnit(m.total(ctx.totals), m.unit)}</div>
+      ${compare ? `<div class="kpi-compare ${compare.cls}">${compare.text} <span class="kpi-compare-label">t.o.v. vorig jaar</span></div>` : ''}
+    </div>`;
+  }).join('')}</div>`;
 }
 
 function renderWidgetTableHtml(widget, ctx) {
@@ -1059,14 +1056,31 @@ function renderWidgetChart(widget, ctx) {
   const metrics = (widget.metrics || []).map(getMetric).filter(Boolean);
   if (!metrics.length) return;
   const families = [...new Set(metrics.map(m => unitFamily(m.unit)))];
-  const datasets = metrics.map((m, i) => {
+  const showCompare = !!widget.compareYoy && !!ctx?.previousYearSeriesData;
+  const datasets = [];
+  metrics.forEach((m, i) => {
     const axis = families.length > 1 ? (unitFamily(m.unit) === families[0] ? 'y' : 'y1') : 'y';
     const color = CHART_PALETTE[i % CHART_PALETTE.length];
-    return {
+    datasets.push({
       label: m.label,
       data: ctx.seriesData.days.map(d => { const v = m.daily(ctx.seriesData.byDay[d]); return v == null ? null : (unitFamily(m.unit) === 'money' ? v.toFixed(2) : v); }),
       borderColor: color, backgroundColor: color + '20', fill: metrics.length === 1, tension: 0.3, yAxisID: axis,
-    };
+    });
+    // Vergelijkingslijn: dezelfde metric, maar dan de waarde van exact één jaar
+    // eerder (per kalenderdag uitgelijnd met de huidige x-as), gestippeld i.p.v.
+    // als losse balk boven de grafiek.
+    if (showCompare) {
+      datasets.push({
+        label: `${m.label} (vorig jaar)`,
+        data: ctx.seriesData.days.map(d => {
+          const row = ctx.previousYearSeriesData.byDay[shiftIsoDateYears(d, -1)];
+          if (!row) return null;
+          const v = m.daily(row);
+          return v == null ? null : (unitFamily(m.unit) === 'money' ? v.toFixed(2) : v);
+        }),
+        borderColor: color, backgroundColor: 'transparent', borderDash: [5, 4], pointRadius: 0, fill: false, tension: 0.3, yAxisID: axis,
+      });
+    }
   });
   makeChart(canvasId, ctx.seriesData.days, datasets);
 }
@@ -1167,14 +1181,10 @@ function buildWidgetElement(widget, ctx, pageKey) {
   else bodyHtml = '';
 
   const showEditBtn = widget.type !== 'yearly';
-  const compareHtml = (widget.type === 'kpi' || widget.type === 'chart') ? widgetCompareHtml(widget, ctx) : '';
   wrap.innerHTML = `
     <div class="widget-header">
       <span class="widget-drag-handle edit-only" title="Verplaatsen">${ICON_GRIP}</span>
-      <div class="widget-title-wrap">
-        <span class="widget-title">${escapeHtml(widget.title || defaultWidgetTitle(widget))}</span>
-        ${compareHtml}
-      </div>
+      <span class="widget-title">${escapeHtml(widget.title || defaultWidgetTitle(widget))}</span>
       <span class="widget-toolbar-actions edit-only">
         ${showEditBtn ? `<button class="widget-icon-btn" onclick="openWidgetEditor('${pageKey}','${widget.id}')" title="Bewerken">${ICON_PENCIL}</button>` : ''}
         <button class="widget-icon-btn" onclick="duplicateWidget('${pageKey}','${widget.id}')" title="Dupliceren">${ICON_COPY}</button>
@@ -1563,6 +1573,7 @@ async function loadReport(forcedClientId) {
 
     currentReportCtx = {
       seriesData: buildDailySeries(metaRows, googleRows, pintRows, analyticsRows),
+      previousYearSeriesData: buildDailySeries(ok(metaPrev), ok(googlePrev), ok(pintPrev)),
       totals: aggregateTotals(metaRows, googleRows, pintRows, analyticsRows),
       previousYearTotals: aggregateTotals(ok(metaPrev), ok(googlePrev), ok(pintPrev)),
       campaignBreakdown: {
