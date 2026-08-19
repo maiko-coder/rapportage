@@ -493,7 +493,8 @@ select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-l
 .widget-block { position: relative; }
 .widget-chart .widget-body,
 .widget-table .widget-body,
-.widget-yearly .widget-body {
+.widget-yearly .widget-body,
+.widget-sheet .widget-body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -501,9 +502,11 @@ select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-l
   transition: box-shadow var(--t), border-color var(--t);
 }
 .widget-chart .widget-body { padding: 20px 24px 16px; }
+.widget-sheet-loading { padding: 24px; text-align: center; font-size: 13px; color: var(--text-muted); }
 .widget-chart .widget-body:hover,
 .widget-table .widget-body:hover,
-.widget-yearly .widget-body:hover { box-shadow: var(--shadow-sm); }
+.widget-yearly .widget-body:hover,
+.widget-sheet .widget-body:hover { box-shadow: var(--shadow-sm); }
 
 .widget-header {
   display: flex;
@@ -566,7 +569,8 @@ select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-l
 .sortable-ghost { opacity: 0.35; }
 .sortable-chosen .widget-chart .widget-body,
 .sortable-chosen .widget-table .widget-body,
-.sortable-chosen .widget-yearly .widget-body { box-shadow: var(--shadow-md); }
+.sortable-chosen .widget-yearly .widget-body,
+.sortable-chosen .widget-sheet .widget-body { box-shadow: var(--shadow-md); }
 
 /* ── EDIT MODE NAV BUTTON ───────────────────── */
 #edit-mode-btn.active {
@@ -982,6 +986,24 @@ tbody tr.note-row td {
   transition: border-color var(--t-fast);
 }
 .settings-account-input:focus { border-color: var(--orange); }
+
+.sheets-list { display: flex; flex-direction: column; gap: 6px; }
+.sheets-empty { font-size: 12px; color: var(--text-light); }
+.sheet-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+}
+.sheet-row-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.sheet-row-info strong { font-size: 13px; font-weight: 600; color: var(--text); }
+.sheet-row-info span { font-size: 11px; color: var(--text-muted); }
+.sheet-add-form {
+  border: 1px dashed var(--border-strong); border-radius: var(--radius-sm);
+  padding: 12px; display: flex; flex-direction: column; gap: 10px; margin-top: 4px;
+}
+.sheet-resolved-title { font-size: 12px; color: var(--text-muted); }
+.sheet-add-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 .settings-save-bar {
   position: sticky; bottom: 0;

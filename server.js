@@ -6,6 +6,7 @@ const crypto   = require('crypto');
 const { Pool } = require('pg');
 const bcrypt   = require('bcryptjs');
 const session  = require('express-session');
+const sheetsApi = require('./sheets');
 
 const app      = express();
 const PORT     = 3000;
@@ -192,6 +193,7 @@ app.get('/api/client-config/:clientId', (req, res) => {
     platforms:        cfg.platforms        || null,
     accountOverrides: cfg.accountOverrides || {},
     reportLayout:     cfg.reportLayout     || null,
+    sheets:           (cfg.sheets || []).map(s => ({ id: s.id, label: s.label })),
   });
 });
 
@@ -206,6 +208,68 @@ app.post('/api/client-config/:clientId/layout', requireAuth, (req, res) => {
   current.clients[clientId] = { ...(current.clients[clientId] || {}), reportLayout };
   writeSettings(current);
   res.json({ ok: true });
+});
+
+// ─── API: resolve & test a Google Sheet link (marketer-only) ─────────────────
+app.post('/api/sheets/resolve', requireAuth, async (req, res) => {
+  const { url } = req.body || {};
+  const sheetId = sheetsApi.extractSheetId(url || '');
+  if (!sheetId) {
+    return res.status(400).json({ error: 'Kon geen geldige Google Sheets-link of ID herkennen.' });
+  }
+  try {
+    const meta = await sheetsApi.fetchSpreadsheetMeta(sheetId);
+    res.json({ ok: true, sheetId, title: meta.title, tabs: meta.tabs });
+  } catch (err) {
+    const email  = sheetsApi.getServiceAccountEmail();
+    const denied = sheetsApi.isPermissionError(err);
+    res.status(denied ? 403 : 500).json({
+      error: denied
+        ? `Geen toegang tot dit sheet. Voeg ${email || 'het service-account'} toe als Kijker (Delen-knop in Google Sheets).`
+        : (err.message || 'Kon sheet niet ophalen.'),
+      serviceAccountEmail: email,
+    });
+  }
+});
+
+// ─── API: save linked sheets for a client (marketer-only) ────────────────────
+app.post('/api/client-config/:clientId/sheets', requireAuth, (req, res) => {
+  const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
+  const { sheets } = req.body;
+  if (!Array.isArray(sheets)) {
+    return res.status(400).json({ error: 'sheets moet een array zijn.' });
+  }
+  const current = readSettings();
+  current.clients[clientId] = { ...(current.clients[clientId] || {}), sheets };
+  writeSettings(current);
+  res.json({ ok: true });
+});
+
+// ─── API: live sheet data for a linked sheet (public — used by report widgets) ─
+const sheetDataCache = new Map(); // `${sheetId}::${tabName}` -> { at, data }
+const SHEET_CACHE_MS = 3 * 60 * 1000;
+
+app.get('/api/client-config/:clientId/sheet-data/:linkId', async (req, res) => {
+  const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
+  const { linkId } = req.params;
+  const cfg  = readSettings().clients[clientId] || {};
+  const link = (cfg.sheets || []).find(s => s.id === linkId);
+  if (!link) return res.status(404).json({ error: 'Sheet-koppeling niet gevonden.' });
+
+  const cacheKey = `${link.sheetId}::${link.tabName || ''}`;
+  const cached   = sheetDataCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SHEET_CACHE_MS) {
+    return res.json({ ok: true, ...cached.data });
+  }
+  try {
+    const values         = await sheetsApi.fetchSheetValues(link.sheetId, link.tabName);
+    const [headers, ...rows] = values;
+    const data = { headers: headers || [], rows: rows || [] };
+    sheetDataCache.set(cacheKey, { at: Date.now(), data });
+    res.json({ ok: true, ...data });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Kon sheetdata niet ophalen.' });
+  }
 });
 
 // ─── Reporting Ninja proxy ────────────────────────────────────────────────────

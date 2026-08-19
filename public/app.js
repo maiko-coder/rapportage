@@ -632,11 +632,17 @@ const ICON_PENCIL = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"
 const ICON_TRASH = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 011-1h2a1 1 0 011 1v1.5M12.5 4.5l-.6 8.4a1.5 1.5 0 01-1.5 1.4h-4.8a1.5 1.5 0 01-1.5-1.4l-.6-8.4"/></svg>`;
 const ICON_PLUS = `<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 1.5v11M1.5 7h11"/></svg>`;
 
-function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', table: 'Campagnetabel', yearly: 'Maandoverzicht' }[type] || type; }
+function widgetTypeLabel(type) { return { kpi: 'KPI-balk', chart: 'Grafiek', table: 'Campagnetabel', yearly: 'Maandoverzicht', sheet: 'Gekoppeld sheet' }[type] || type; }
+
+function availableSheets() { return (currentClientSettings?.sheets || []); }
 
 function defaultWidgetTitle(widget) {
   if (widget.type === 'yearly') return 'Maandoverzicht dit jaar';
   if (widget.type === 'table')  return `Campagnes — ${PLATFORM_META[widget.platform]?.label || widget.platform}`;
+  if (widget.type === 'sheet') {
+    const sheet = availableSheets().find(s => s.id === widget.sheetLinkId);
+    return sheet?.label || widgetTypeLabel('sheet');
+  }
   const metrics = (widget.metrics || []).map(getMetric).filter(Boolean);
   if (!metrics.length) return widgetTypeLabel(widget.type);
   if (widget.type === 'kpi' && metrics.length > 3) return 'KPI-overzicht';
@@ -685,6 +691,32 @@ function renderWidgetChart(widget, ctx) {
   makeChart(canvasId, ctx.seriesData.days, datasets);
 }
 
+async function renderWidgetSheet(widget) {
+  const el = document.getElementById(`w-sheet-${widget.id}`);
+  if (!el) return;
+  if (!widget.sheetLinkId) {
+    el.innerHTML = `<p class="widget-empty">Geen sheet gekoppeld. Klik op het potlood-icoon hierboven om deze widget te bewerken.</p>`;
+    return;
+  }
+  try {
+    const r = await fetch(`/api/client-config/${currentClientId}/sheet-data/${widget.sheetLinkId}`);
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Kon sheetdata niet laden.');
+    el.innerHTML = renderSheetTableHtml(d.headers, d.rows);
+  } catch (err) {
+    el.innerHTML = `<p class="widget-empty">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderSheetTableHtml(headers, rows) {
+  if (!headers || !headers.length) return '<p class="widget-empty">Dit sheet bevat nog geen data.</p>';
+  const thead = `<tr>${headers.map(h => `<th>${escapeHtml(h || '')}</th>`).join('')}</tr>`;
+  const tbody = (rows || []).map(row =>
+    `<tr>${headers.map((_, i) => `<td>${escapeHtml(row[i] != null ? String(row[i]) : '')}</td>`).join('')}</tr>`
+  ).join('');
+  return `<div class="table-wrapper"><table><thead>${thead}</thead><tbody>${tbody}</tbody></table></div>`;
+}
+
 function buildWidgetElement(widget, ctx, pageKey) {
   const wrap = document.createElement('div');
   wrap.className = `widget-block widget-${widget.type}`;
@@ -695,6 +727,7 @@ function buildWidgetElement(widget, ctx, pageKey) {
   else if (widget.type === 'chart')  bodyHtml = `<canvas id="w-chart-${widget.id}"></canvas>`;
   else if (widget.type === 'table')  bodyHtml = renderWidgetTableHtml(widget, ctx);
   else if (widget.type === 'yearly') bodyHtml = renderWidgetYearlyHtml(widget);
+  else if (widget.type === 'sheet')  bodyHtml = `<div id="w-sheet-${widget.id}" class="widget-sheet-loading">Laden…</div>`;
   else bodyHtml = '';
 
   const showEditBtn = widget.type !== 'yearly';
@@ -728,12 +761,15 @@ function renderPageWidgets(pageKey) {
   if (!currentReportCtx) return;
 
   const chartWidgets = [];
+  const sheetWidgets = [];
   widgets.forEach(w => {
     const el = buildWidgetElement(w, currentReportCtx, pageKey);
     container.appendChild(el);
     if (w.type === 'chart') chartWidgets.push(w);
+    if (w.type === 'sheet') sheetWidgets.push(w);
   });
   chartWidgets.forEach(w => renderWidgetChart(w, currentReportCtx));
+  sheetWidgets.forEach(renderWidgetSheet);
   widgets.filter(w => w.type === 'yearly').forEach(w => renderYearlyBody(w.id, currentReportCtx.yearlyRows));
 
   container.classList.toggle('edit-on', editMode);
@@ -785,6 +821,18 @@ function renderWidgetEditorFields(type, widget) {
     el.innerHTML = `<p class="widget-editor-hint">Toont automatisch het maandoverzicht (uitgaven &amp; clicks per platform) met ruimte voor notities per maand. Geen extra instellingen nodig.</p>`;
     return;
   }
+  if (type === 'sheet') {
+    const sheets = availableSheets();
+    if (!sheets.length) {
+      el.innerHTML = `<p class="widget-editor-hint">Deze klant heeft nog geen gekoppelde Google Sheets. Voeg er eerst één toe via Instellingen → Gekoppelde sheets.</p>`;
+      return;
+    }
+    el.innerHTML = `<label class="settings-row"><span class="settings-label">Sheet</span>
+      <select id="widget-sheet-select">${sheets.map(s => `<option value="${s.id}" ${widget?.sheetLinkId===s.id?'selected':''}>${escapeHtml(s.label || 'Sheet')}</option>`).join('')}</select>
+    </label>
+    <p class="widget-editor-hint">Toont de eerste rij van het gekoppelde tabblad als kolomkoppen, en de rest als tabelgegevens — precies zoals het in het sheet staat.</p>`;
+    return;
+  }
   if (type === 'table') {
     const platforms = availablePlatforms();
     if (!platforms.length) { el.innerHTML = `<p class="widget-editor-hint">Deze klant heeft nog geen gekoppelde platformen.</p>`; return; }
@@ -821,13 +869,16 @@ function saveWidgetFromEditor() {
 
   if (type === 'table') {
     widget.platform = document.getElementById('widget-platform-select')?.value || availablePlatforms()[0] || 'meta';
-    delete widget.metrics;
+    delete widget.metrics; delete widget.sheetLinkId;
   } else if (type === 'yearly') {
+    delete widget.metrics; delete widget.platform; delete widget.sheetLinkId;
+  } else if (type === 'sheet') {
+    widget.sheetLinkId = document.getElementById('widget-sheet-select')?.value || null;
     delete widget.metrics; delete widget.platform;
   } else {
     const checked = [...document.querySelectorAll('#widget-editor-fields input[type=checkbox]:checked')].map(c => c.value);
     widget.metrics = checked;
-    delete widget.platform;
+    delete widget.platform; delete widget.sheetLinkId;
   }
 
   closeWidgetEditor();
