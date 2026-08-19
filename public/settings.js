@@ -25,7 +25,33 @@ const promoEditing = {};
     currentSettings = { clients: {} };
   }
   renderAll();
+  checkStorageStatus();
 })();
+
+// Waarschuwt duidelijk zichtbaar als wijzigingen NIET blijvend worden
+// opgeslagen (bv. omdat DATABASE_URL ontbreekt op Vercel), i.p.v. dat
+// opgeslagen data stilletjes verdwijnt na een herlaad/herstart.
+async function checkStorageStatus() {
+  const banner = document.getElementById('storage-banner');
+  if (!banner) return;
+  try {
+    const r = await fetch('/api/debug/storage-status');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (s.persistent) { banner.innerHTML = ''; return; }
+    banner.innerHTML = `
+      <div class="storage-warning-banner">
+        <strong>⚠️ Wijzigingen worden niet blijvend opgeslagen.</strong>
+        ${s.isVercel && !s.hasDatabaseUrl
+          ? 'DATABASE_URL ontbreekt in de Vercel-omgevingsvariabelen van dit project. Koppel de Postgres-database via het "Storage"-tabblad in Vercel (of voeg DATABASE_URL handmatig toe onder Settings → Environment Variables) en deploy opnieuw.'
+          : s.error
+            ? `Kan geen verbinding maken met de database: ${escHtml(s.error)}`
+            : 'Alles wat je hier opslaat gaat verloren zodra de server herstart.'}
+      </div>`;
+  } catch {
+    // stil falen — geen kritieke functionaliteit
+  }
+}
 
 // ─── Render all clients ───────────────────────────────────────────────────────
 function renderAll() {

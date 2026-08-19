@@ -171,6 +171,33 @@ app.get('/api/me', (req, res) => {
   }
 });
 
+// ─── Debug: laat zien of instellingen echt blijvend worden opgeslagen ─────────
+// (Postgres) of alleen tijdelijk (lokaal bestand / Vercel /tmp). Gebruikt door
+// de instellingenpagina om een duidelijke waarschuwing te tonen i.p.v. dat
+// wijzigingen stilletjes verdwijnen na een herstart/herlaad.
+app.get('/api/debug/storage-status', requireAuth, async (req, res) => {
+  const status = {
+    isVercel: IS_VERCEL,
+    hasDatabaseUrl: !!process.env.DATABASE_URL,
+    databaseConnected: false,
+    persistent: false,
+    error: null,
+  };
+  if (authDb) {
+    try {
+      await ensureSettingsTable();
+      await authDb.query('SELECT 1');
+      status.databaseConnected = true;
+      status.persistent = true;
+    } catch (err) {
+      status.error = err.message;
+    }
+  } else {
+    status.persistent = !IS_VERCEL; // lokaal bestand is prima blijvend, /tmp op Vercel niet
+  }
+  res.json(status);
+});
+
 // ─── Client view (shareable link) — public, has its own password gate ─────────
 app.get('/r/:clientId', (req, res) => {
   const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');

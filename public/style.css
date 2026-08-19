@@ -950,6 +950,18 @@ tbody tr.note-row td {
 }
 .settings-header p { font-size: 13px; color: var(--text-muted); margin-top: 3px; }
 
+.storage-warning-banner {
+  background: #fff4e5;
+  border: 1px solid #f5c56b;
+  color: #7a4a05;
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+.storage-warning-banner strong { display: block; margin-bottom: 4px; font-size: 13.5px; }
+
 .settings-card {
   background: var(--surface);
   border: 1px solid var(--border);
