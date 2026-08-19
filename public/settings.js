@@ -16,6 +16,20 @@ const PROMO_PLATFORM_LABELS = { meta: 'Meta Ads', google: 'Google Ads', pinteres
 const promoBusy = {};
 const promoEditing = {};
 
+// Lijst van Google Analytics 4-koppelingen (Reporting Ninja "connections"),
+// eenmalig opgehaald en daarna herbruikt voor elke klantkaart.
+let ga4ConnectionsData = null;
+let ga4ConnectionsPromise = null;
+function loadGa4Connections() {
+  if (!ga4ConnectionsPromise) {
+    ga4ConnectionsPromise = fetch('/api/connections', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ integration_id: 'ga4' }),
+    }).then(r => r.json()).catch(err => ({ status: 'error', message: err.message }));
+  }
+  return ga4ConnectionsPromise;
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 (async function init() {
   try {
@@ -88,7 +102,13 @@ function renderClientCard(client) {
                onchange="onPlatformToggle('${client.id}','${p}',this.checked)" />
         ${PLATFORM_LABELS[p]}
       </label>`;
-  }).join('');
+  }).join('') + (saved.analytics ? `
+      <label class="settings-toggle-label">
+        <input type="checkbox" id="plt-analytics-${client.id}" ${platformVis.analytics !== false ? 'checked' : ''}
+               onchange="onPlatformToggle('${client.id}','analytics',this.checked)" />
+        Analytics (GA4)
+      </label>` : '');
+  const visibleSourceCount = clientPlatforms.length + (saved.analytics ? 1 : 0);
 
   const accountRows = clientPlatforms.map(p => {
     const defaultId = client[p]?.account_id || '';
@@ -148,7 +168,7 @@ function renderClientCard(client) {
         </div>
 
         <!-- Zichtbare rapporten -->
-        ${clientPlatforms.length > 1 ? `
+        ${visibleSourceCount > 1 ? `
         <div class="settings-row">
           <div class="settings-label">Zichtbare rapporten</div>
           <div class="settings-toggles">
@@ -172,6 +192,12 @@ function renderClientCard(client) {
         <div class="settings-row">
           <div class="settings-label">Gekoppelde sheets</div>
           ${renderSheetsSection(client.id, saved)}
+        </div>
+
+        <!-- Google Analytics 4 -->
+        <div class="settings-row">
+          <div class="settings-label">Analytics (GA4)</div>
+          ${renderAnalyticsSection(client.id, saved)}
         </div>
 
         <!-- Promotie voor ontbrekende kanalen -->
@@ -480,6 +506,87 @@ async function saveSheets(clientId, sheets) {
   renderAll();
 }
 
+// ─── Google Analytics 4 koppelen ──────────────────────────────────────────────
+// Gebruikt dezelfde "connections" als Meta/Google Ads/Pinterest al doen: één
+// Gmail-login = één connection in Reporting Ninja, met daaronder alle GA4-
+// properties die dat account kan zien. Nieuwe (ook persoonlijke) Gmail-accounts
+// voeg je toe via Reporting Ninja's eigen dashboard (Datasources), niet hier.
+function renderAnalyticsSection(clientId, saved) {
+  const link = saved.analytics;
+  if (link) {
+    return `
+      <div class="sheet-row">
+        <div class="sheet-row-info">
+          <strong>${escHtml(link.label || link.accountId)}</strong>
+          <span>${escHtml(link.connectionKey || '')}</span>
+        </div>
+        <button class="btn-sm btn-sm-danger" onclick="unlinkAnalytics('${clientId}')">Ontkoppelen</button>
+      </div>`;
+  }
+
+  if (ga4ConnectionsData === null) {
+    loadGa4Connections().then(d => { ga4ConnectionsData = d; renderAll(); });
+    return `<div class="sheets-empty">GA4-koppelingen laden…</div>`;
+  }
+
+  const connections = (ga4ConnectionsData?.status === 'ok' && ga4ConnectionsData.data?.connections) || [];
+  const reauthorizeHint = `Voeg een koppeling toe (of herstel een verlopen koppeling) via
+    <a href="https://app.reportingninja.com/#!datasources" target="_blank" rel="noopener">Reporting Ninja → Datasources</a>
+    — log daar in met het Gmail-account dat toegang heeft tot de Analytics-property van deze klant — en herlaad daarna deze pagina.`;
+
+  if (!connections.length) {
+    return `<div class="sheets-empty">Nog geen Google Analytics-koppeling gevonden.</div>
+      <div class="settings-pw-hint">${reauthorizeHint}</div>`;
+  }
+
+  const groupedOptions = connections.map(c => {
+    const opts = (c.accounts || []).map(a =>
+      `<option value="${escHtml(c.connection_key)}|||${escHtml(a.account_id)}|||${escHtml(a.account_name)}">${escHtml(a.account_name)}</option>`
+    ).join('');
+    return connections.length > 1 ? `<optgroup label="${escHtml(c.connection_name || c.connection_key)}">${opts}</optgroup>` : opts;
+  }).join('');
+
+  return `
+    <div class="sheet-add-form">
+      <div class="settings-link-row">
+        <select id="analytics-select-${clientId}" style="flex:1">
+          <option value="">Kies een Analytics-property…</option>
+          ${groupedOptions}
+        </select>
+        <button class="settings-copy-btn" onclick="linkAnalytics('${clientId}')">Koppelen</button>
+      </div>
+      <div class="settings-pw-hint">Staat de juiste property er niet bij? ${reauthorizeHint}</div>
+    </div>`;
+}
+
+async function linkAnalytics(clientId) {
+  const sel = document.getElementById(`analytics-select-${clientId}`);
+  const val = sel?.value;
+  if (!val) return;
+  const [connectionKey, accountId, label] = val.split('|||');
+  await saveAnalyticsLink(clientId, { connectionKey, accountId, label });
+}
+
+async function unlinkAnalytics(clientId) {
+  if (!confirm('Analytics-koppeling voor deze klant verwijderen?')) return;
+  await saveAnalyticsLink(clientId, null);
+}
+
+async function saveAnalyticsLink(clientId, analytics) {
+  try {
+    const r = await fetch(`/api/client-config/${clientId}/analytics`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analytics }),
+    });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || 'Opslaan mislukt.');
+    if (!currentSettings.clients) currentSettings.clients = {};
+    currentSettings.clients[clientId] = { ...(currentSettings.clients[clientId] || {}), analytics };
+  } catch (err) {
+    alert('Fout bij opslaan van Analytics-koppeling: ' + err.message);
+  }
+  renderAll();
+}
+
 // ─── Event handlers ───────────────────────────────────────────────────────────
 function onPwInput(clientId) {
   pwChanged[clientId] = true;
@@ -567,6 +674,8 @@ async function saveAll() {
       const cb = document.getElementById(`plt-${p}-${id}`);
       if (cb) platVis[p] = cb.checked;
     });
+    const analyticsCb = document.getElementById(`plt-analytics-${id}`);
+    if (analyticsCb) platVis.analytics = analyticsCb.checked;
     if (Object.keys(platVis).length) entry.platforms = platVis;
 
     // Account overrides

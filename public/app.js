@@ -207,17 +207,19 @@ async function fetchClientConfig(clientId) {
   } catch { return null; }
 }
 
-function applyAccountOverrides(client, overrides) {
-  if (!overrides || !Object.keys(overrides).length) return client;
+function applyAccountOverrides(client, overrides, analyticsLink) {
   const c = JSON.parse(JSON.stringify(client));
-  if (overrides.meta      && c.meta)      c.meta.account_id      = overrides.meta;
-  if (overrides.google    && c.google)    c.google.account_id    = overrides.google;
-  if (overrides.pinterest && c.pinterest) c.pinterest.account_id = overrides.pinterest;
+  if (overrides?.meta      && c.meta)      c.meta.account_id      = overrides.meta;
+  if (overrides?.google    && c.google)    c.google.account_id    = overrides.google;
+  if (overrides?.pinterest && c.pinterest) c.pinterest.account_id = overrides.pinterest;
+  // Analytics (GA4) staat niet in clients.js — die koppeling leeft volledig in
+  // de instellingen (per klant een Reporting Ninja connection + property-ID).
+  c.analytics = analyticsLink ? { connection_key: analyticsLink.connectionKey, account_id: analyticsLink.accountId } : null;
   return c;
 }
 
 function updateSidebarForClient(client, platformSettings) {
-  ['meta', 'google', 'pinterest'].forEach(platform => {
+  ['meta', 'google', 'pinterest', 'analytics'].forEach(platform => {
     const btn = document.querySelector(`.nav-item[data-platform="${platform}"]`);
     if (!btn) return;
     const hasAccount = !!client[platform];
@@ -240,7 +242,7 @@ function updateSidebarForClient(client, platformSettings) {
   });
 
   // Also show/hide the "Platformen" section header based on any visible platform
-  const anyVisible = ['meta','google','pinterest'].some(p => {
+  const anyVisible = ['meta','google','pinterest','analytics'].some(p => {
     const btn = document.querySelector(`.nav-item[data-platform="${p}"]`);
     return btn && btn.style.display !== 'none';
   });
@@ -413,6 +415,10 @@ function fmt(n, type) {
   if (type === 'eur2') return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
   if (type === 'pct')  return v.toFixed(2) + '%';
   if (type === 'ratio') return v.toFixed(2).replace('.', ',') + 'x';
+  if (type === 'duration') {
+    const s = Math.round(v);
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
   return new Intl.NumberFormat('nl-NL').format(Math.round(v));
 }
 
@@ -565,6 +571,24 @@ async function loadPinterest(client, dateRange) {
   return d.data?.rows || [];
 }
 
+async function loadAnalytics(client, dateRange) {
+  if (!client.analytics) return [];
+  const d = await apiPost('/api/query', {
+    integration_id: 'ga4', connection_key: client.analytics.connection_key, account_id: client.analytics.account_id,
+    fields: ['date', 'sessions', 'activeUsers', 'newUsers', 'engagedSessions', 'screenPageViews', 'keyEvents', 'totalRevenue', 'userEngagementDuration'],
+    date_range: dateRange, limit: 500,
+  });
+  return d.data?.rows || [];
+}
+
+// GA4-datums komen bij Google standaard binnen als "YYYYMMDD"; normaliseer naar
+// YYYY-MM-DD zodat ze aansluiten bij de dagsleutels van de andere platformen.
+function normalizeGa4Date(v) {
+  const s = String(v || '');
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  return s;
+}
+
 // Pinterest's own Ads API only allows querying data from at most 90 days before
 // today, and rejects any request that reaches further back — regardless of range
 // length. So clip the requested range to that rolling 90-day window before querying;
@@ -606,6 +630,7 @@ const PLATFORM_META = {
   google:    { label: 'Google' },
   pinterest: { label: 'Pinterest' },
   total:     { label: 'Totaal' },
+  analytics: { label: 'Analytics' },
 };
 
 // Alle velden die per platform worden opgeteld. "total" wordt hier automatisch
@@ -655,21 +680,41 @@ function addPinterestRow(t, r) {
   t.engagements += parseFloat(r.ENGAGEMENTS_CM || 0);
 }
 
-function aggregateTotals(metaRows, googleRows, pintRows) {
+// Analytics (GA4) is geen advertentieplatform — spend/clicks/CTR slaan er niet
+// op — dus die krijgt een eigen totals-vorm i.p.v. de ad-platform-shape hierboven.
+// Hij telt niet mee in "Totaal" (dat blijft puur de 3 advertentieplatformen).
+function emptyAnalyticsTotals() {
+  return { sessions: 0, activeUsers: 0, newUsers: 0, engagedSessions: 0, screenPageViews: 0, keyEvents: 0, totalRevenue: 0, engagementDuration: 0 };
+}
+function addAnalyticsRow(t, r) {
+  t.sessions += parseFloat(r.sessions || 0);
+  t.activeUsers += parseFloat(r.activeUsers || 0);
+  t.newUsers += parseFloat(r.newUsers || 0);
+  t.engagedSessions += parseFloat(r.engagedSessions || 0);
+  t.screenPageViews += parseFloat(r.screenPageViews || 0);
+  t.keyEvents += parseFloat(r.keyEvents || 0);
+  t.totalRevenue += parseFloat(r.totalRevenue || 0);
+  t.engagementDuration += parseFloat(r.userEngagementDuration || 0);
+}
+
+function aggregateTotals(metaRows, googleRows, pintRows, analyticsRows = []) {
   const meta = emptyPlatformTotals(), google = emptyPlatformTotals(), pinterest = emptyPlatformTotals();
+  const analytics = emptyAnalyticsTotals();
   metaRows.forEach(r => addMetaRow(meta, r));
   googleRows.forEach(r => addGoogleRow(google, r));
   pintRows.forEach(r => addPinterestRow(pinterest, r));
+  analyticsRows.forEach(r => addAnalyticsRow(analytics, r));
   const total = combinePlatformTotals(meta, google, pinterest);
-  return { meta, google, pinterest, total };
+  return { meta, google, pinterest, total, analytics };
 }
 
-function buildDailySeries(metaRows, googleRows, pintRows) {
+function buildDailySeries(metaRows, googleRows, pintRows, analyticsRows = []) {
   const byDay = {};
-  const ensure = d => byDay[d] || (byDay[d] = { meta: emptyPlatformTotals(), google: emptyPlatformTotals(), pinterest: emptyPlatformTotals() });
-  metaRows.forEach(r   => { const d = r.day || '';               if (d) addMetaRow(ensure(d).meta, r); });
-  googleRows.forEach(r => { const d = r['segments.date'] || '';  if (d) addGoogleRow(ensure(d).google, r); });
-  pintRows.forEach(r   => { const d = r.DAY || '';                if (d) addPinterestRow(ensure(d).pinterest, r); });
+  const ensure = d => byDay[d] || (byDay[d] = { meta: emptyPlatformTotals(), google: emptyPlatformTotals(), pinterest: emptyPlatformTotals(), analytics: emptyAnalyticsTotals() });
+  metaRows.forEach(r   => { const d = r.day || '';                  if (d) addMetaRow(ensure(d).meta, r); });
+  googleRows.forEach(r => { const d = r['segments.date'] || '';     if (d) addGoogleRow(ensure(d).google, r); });
+  pintRows.forEach(r   => { const d = r.DAY || '';                   if (d) addPinterestRow(ensure(d).pinterest, r); });
+  analyticsRows.forEach(r => { const d = normalizeGa4Date(r.date);  if (d) addAnalyticsRow(ensure(d).analytics, r); });
   const days = Object.keys(byDay).sort();
   days.forEach(d => {
     const e = byDay[d];
@@ -691,6 +736,19 @@ const EXTRA_METRIC_DEFS = [
   { key: 'allConversions',   shortLabel: 'Alle conversies (incl. view-through)', unit: 'count', platforms: ['google'] },
   { key: 'saves',            shortLabel: 'Saves',             unit: 'count', platforms: ['pinterest'] },
 ];
+
+// Analytics (GA4) basis-metrics — direct sommeerbare velden. Engagement rate,
+// bouncepercentage en gem. sessieduur zijn verhoudingen en worden daarom apart
+// afgeleid (net als CTR/CPC bij de advertentieplatformen).
+const ANALYTICS_METRIC_DEFS = [
+  { key: 'sessions',        shortLabel: 'Sessies' },
+  { key: 'activeUsers',     shortLabel: 'Gebruikers' },
+  { key: 'newUsers',        shortLabel: 'Nieuwe gebruikers' },
+  { key: 'engagedSessions', shortLabel: 'Geëngageerde sessies' },
+  { key: 'screenPageViews', shortLabel: 'Paginaweergaven' },
+  { key: 'keyEvents',       shortLabel: 'Conversies' },
+  { key: 'totalRevenue',    shortLabel: 'Omzet', unit: 'eur' },
+].map(m => ({ unit: 'count', ...m }));
 
 function buildMetricCatalog() {
   const metrics = [];
@@ -725,6 +783,22 @@ function buildMetricCatalog() {
       daily: d => d[p].spend > 0 ? d[p].conversionsValue / d[p].spend : null,
       total: t => t[p].spend > 0 ? t[p].conversionsValue / t[p].spend : 0 });
   });
+  // Analytics (GA4) — geen advertentieplatform, dus los van de meta/google/
+  // pinterest/total-lus hierboven. Alleen zichtbaar in de widget-editor als de
+  // klant een property gekoppeld heeft (zie hasAnalytics()).
+  ANALYTICS_METRIC_DEFS.forEach(def => {
+    metrics.push({ id: `analytics.${def.key}`, platform: 'analytics', shortLabel: def.shortLabel, label: `Analytics — ${def.shortLabel}`, unit: def.unit,
+      daily: d => d.analytics[def.key], total: t => t.analytics[def.key] });
+  });
+  metrics.push({ id: 'analytics.engagementRate', platform: 'analytics', shortLabel: 'Engagement rate', label: 'Analytics — Engagement rate', unit: 'pct', extra: true,
+    daily: d => d.analytics.sessions > 0 ? d.analytics.engagedSessions / d.analytics.sessions * 100 : null,
+    total: t => t.analytics.sessions > 0 ? t.analytics.engagedSessions / t.analytics.sessions * 100 : 0 });
+  metrics.push({ id: 'analytics.bounceRate', platform: 'analytics', shortLabel: 'Bouncepercentage', label: 'Analytics — Bouncepercentage', unit: 'pct', extra: true,
+    daily: d => d.analytics.sessions > 0 ? (d.analytics.sessions - d.analytics.engagedSessions) / d.analytics.sessions * 100 : null,
+    total: t => t.analytics.sessions > 0 ? (t.analytics.sessions - t.analytics.engagedSessions) / t.analytics.sessions * 100 : 0 });
+  metrics.push({ id: 'analytics.avgSessionDuration', platform: 'analytics', shortLabel: 'Gem. sessieduur', label: 'Analytics — Gem. sessieduur', unit: 'duration', extra: true,
+    daily: d => d.analytics.sessions > 0 ? d.analytics.engagementDuration / d.analytics.sessions : null,
+    total: t => t.analytics.sessions > 0 ? t.analytics.engagementDuration / t.analytics.sessions : 0 });
   return metrics;
 }
 const METRICS = buildMetricCatalog();
@@ -828,7 +902,7 @@ function renderYearlyBody(widgetId, rows) {
 }
 
 // ═══ Widget engine ═════════════════════════════════════════════════════════
-const PAGE_KEYS = ['samenvatting', 'meta', 'google', 'pinterest'];
+const PAGE_KEYS = ['samenvatting', 'meta', 'google', 'pinterest', 'analytics'];
 
 const ICON_GRIP = `<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><circle cx="4" cy="3" r="1.15"/><circle cx="10" cy="3" r="1.15"/><circle cx="4" cy="7" r="1.15"/><circle cx="10" cy="7" r="1.15"/><circle cx="4" cy="11" r="1.15"/><circle cx="10" cy="11" r="1.15"/></svg>`;
 const ICON_PENCIL = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5a1.5 1.5 0 012.12 2.12L5 13.25 2 14l.75-3L11.5 2.5z"/></svg>`;
@@ -1152,9 +1226,13 @@ function availablePlatforms() {
   return ['meta', 'google', 'pinterest'].filter(p => currentClient && currentClient[p]);
 }
 
+function hasAnalytics() { return !!(currentClient && currentClient.analytics); }
+
 function availableMetricGroups() {
   const platforms = ['total', ...availablePlatforms()];
-  return platforms.map(p => ({ platform: p, label: PLATFORM_META[p].label, metrics: METRICS.filter(m => m.platform === p) }));
+  const groups = platforms.map(p => ({ platform: p, label: PLATFORM_META[p].label, metrics: METRICS.filter(m => m.platform === p) }));
+  if (hasAnalytics()) groups.push({ platform: 'analytics', label: PLATFORM_META.analytics.label, metrics: METRICS.filter(m => m.platform === 'analytics') });
+  return groups;
 }
 
 function addWidget(pageKey) { openWidgetEditor(pageKey, null); }
@@ -1413,6 +1491,11 @@ const DEFAULT_LAYOUT = {
     { id: 'def-pin-eng',   type: 'chart', title: 'Clicks en impressies per dag', metrics: ['pinterest.clicks', 'pinterest.impressions'] },
     { id: 'def-pin-table', type: 'table', platform: 'pinterest' },
   ],
+  analytics: [
+    { id: 'def-an-kpi',      type: 'kpi', title: 'KPI-overzicht', metrics: ['analytics.sessions', 'analytics.activeUsers', 'analytics.engagementRate', 'analytics.keyEvents'] },
+    { id: 'def-an-sessions', type: 'chart', title: 'Sessies en gebruikers per dag', metrics: ['analytics.sessions', 'analytics.activeUsers'] },
+    { id: 'def-an-conv',     type: 'chart', title: 'Conversies per dag', metrics: ['analytics.keyEvents'] },
+  ],
 };
 
 // ─── Main load ────────────────────────────────────────────────────────────────
@@ -1431,7 +1514,7 @@ async function loadReport(forcedClientId) {
   }
 
   // Apply account overrides from settings
-  const client = applyAccountOverrides(baseClient, currentClientSettings?.accountOverrides);
+  const client = applyAccountOverrides(baseClient, currentClientSettings?.accountOverrides, currentClientSettings?.analytics);
   currentClient = client;
   currentClientId = clientId;
 
@@ -1454,18 +1537,19 @@ async function loadReport(forcedClientId) {
   const prevYearRange = previousYearDateRange(dateRange);
 
   try {
-    const [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear, metaPrev, googlePrev, pintPrev] = await Promise.allSettled([
-      loadMeta(client, dateRange), loadGoogle(client, dateRange), loadPinterest(client, dateRange),
+    const [metaRes, googleRes, pintRes, analyticsRes, metaYear, googleYear, pintYear, metaPrev, googlePrev, pintPrev] = await Promise.allSettled([
+      loadMeta(client, dateRange), loadGoogle(client, dateRange), loadPinterest(client, dateRange), loadAnalytics(client, dateRange),
       loadMeta(client, yearDateRange), loadGoogle(client, yearDateRange), loadPinterestYearly(client, yearDateRange),
       loadMeta(client, prevYearRange), loadGoogle(client, prevYearRange), loadPinterest(client, prevYearRange),
     ]);
 
     const ok = r => r.status === 'fulfilled' ? r.value : [];
-    const metaRows = ok(metaRes), googleRows = ok(googleRes), pintRows = ok(pintRes);
+    const metaRows = ok(metaRes), googleRows = ok(googleRes), pintRows = ok(pintRes), analyticsRows = ok(analyticsRes);
 
     const allResults = [metaRes, googleRes, pintRes, metaYear, googleYear, pintYear];
     const allLabels  = ['Meta', 'Google', 'Pinterest', 'Meta (jaar)', 'Google (jaar)', 'Pinterest (jaar)'];
     const errs = allResults.map((r,i)=>r.status==='rejected'?allLabels[i]+': '+r.reason?.message:null).filter(Boolean);
+    if (client.analytics && analyticsRes.status === 'rejected') errs.push('Analytics: ' + (analyticsRes.reason?.message || 'onbekende fout'));
     if (errs.length) showError(errs.join(' | '));
     // Fouten bij het ophalen van "vorig jaar" (bv. Pinterest, dat > 90 dagen terug
     // toch al niets teruggeeft) tellen niet als harde fout — de vergelijking valt
@@ -1478,8 +1562,8 @@ async function loadReport(forcedClientId) {
     document.getElementById('kpi-sub').textContent     = 'Periode: ' + periodLabel + (periodInfo?` (${periodInfo.days} dagen)`:'')+' · alle gekoppelde platformen';
 
     currentReportCtx = {
-      seriesData: buildDailySeries(metaRows, googleRows, pintRows),
-      totals: aggregateTotals(metaRows, googleRows, pintRows),
+      seriesData: buildDailySeries(metaRows, googleRows, pintRows, analyticsRows),
+      totals: aggregateTotals(metaRows, googleRows, pintRows, analyticsRows),
       previousYearTotals: aggregateTotals(ok(metaPrev), ok(googlePrev), ok(pintPrev)),
       campaignBreakdown: {
         meta: buildCampaignBreakdown('meta', metaRows),

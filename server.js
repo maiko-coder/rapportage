@@ -324,6 +324,7 @@ app.get('/api/client-config/:clientId', async (req, res) => {
       reportLayout:     cfg.reportLayout     || null,
       sheets:           (cfg.sheets || []).map(s => ({ id: s.id, label: s.label })),
       promotions:       cfg.promotions       || {},
+      analytics:        cfg.analytics        || null,
     });
   } catch (err) {
     console.error('GET /api/client-config error:', err.message);
@@ -386,6 +387,28 @@ app.post('/api/client-config/:clientId/sheets', requireAuth, async (req, res) =>
   } catch (err) {
     console.error('POST /sheets error:', err.message);
     res.status(500).json({ error: 'Opslaan van sheet mislukt: ' + err.message });
+  }
+});
+
+// ─── API: koppel/ontkoppel een Google Analytics 4-property voor een klant
+// (marketer-only). De property zelf komt uit een bestaande Reporting Ninja-
+// "connection" (zie /api/connections met integration_id "ga4") — er wordt hier
+// niets rechtstreeks bij Google opgehaald, enkel opgeslagen welke connection +
+// property-ID bij deze klant horen. ──────────────────────────────────────────
+app.post('/api/client-config/:clientId/analytics', requireAuth, async (req, res) => {
+  const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
+  const { analytics } = req.body;
+  if (analytics && (!analytics.connectionKey || !analytics.accountId)) {
+    return res.status(400).json({ error: 'connectionKey en accountId zijn verplicht.' });
+  }
+  try {
+    const current = await readSettings();
+    current.clients[clientId] = { ...(current.clients[clientId] || {}), analytics: analytics || null };
+    await writeSettings(current);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('POST /analytics error:', err.message);
+    res.status(500).json({ error: 'Opslaan van Analytics-koppeling mislukt: ' + err.message });
   }
 });
 

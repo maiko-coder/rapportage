@@ -1064,6 +1064,8 @@ tbody tr.note-row td {
   font-size: 11px; color: var(--text-light); margin-top: 2px;
 }
 .settings-pw-hint.active { color: var(--success); font-weight: 500; }
+.settings-pw-hint a { color: var(--orange); text-decoration: none; }
+.settings-pw-hint a:hover { text-decoration: underline; }
 
 .settings-toggles { display: flex; gap: 16px; flex-wrap: wrap; }
 .settings-toggle-label {
