@@ -16,26 +16,77 @@ const PORT     = 3000;
 const API_KEY  = 'x8mgquMubZtKRsmOQyaW';
 const API_BASE = 'https://api.reportingninja.com/v1';
 
-// ─── Settings store ───────────────────────────────────────────────────────────
-const IS_VERCEL     = !!process.env.VERCEL;
-const DATA_DIR      = IS_VERCEL ? '/tmp' : path.join(__dirname, 'data');
-const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+// ─── Auth DB (ook gebruikt voor klantinstellingen-opslag) ────────────────────
+const authDb = process.env.DATABASE_URL ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 2,
+}) : null;
 
-try {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(SETTINGS_FILE)) {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ clients: {} }, null, 2));
+// ─── Settings store ───────────────────────────────────────────────────────────
+// Op Vercel is het lokale bestandssysteem (/tmp) niet blijvend tussen requests —
+// elke serverless-invocatie kan een andere instantie raken. Daarom slaan we
+// klantinstellingen op in Postgres (dezelfde DB als de login-tabel) zodra die
+// beschikbaar is. Zonder DATABASE_URL (puur lokale dev zonder DB) valt dit
+// terug op een lokaal JSON-bestand.
+const DATA_DIR      = path.join(__dirname, 'data');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const settingsTableReady = authDb
+  ? authDb.query(`
+      CREATE TABLE IF NOT EXISTS rapportage_client_settings (
+        client_id  TEXT PRIMARY KEY,
+        data       JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `).catch(e => console.error('Kon rapportage_client_settings niet aanmaken:', e.message))
+  : Promise.resolve();
+
+if (!authDb) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(SETTINGS_FILE)) {
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ clients: {} }, null, 2));
+    }
+  } catch (e) {
+    console.error('Settings init error (non-fatal):', e.message);
   }
-} catch (e) {
-  console.error('Settings init error (non-fatal):', e.message);
 }
 
-function readSettings() {
+async function readSettings() {
+  if (authDb) {
+    await settingsTableReady;
+    try {
+      const { rows } = await authDb.query('SELECT client_id, data FROM rapportage_client_settings');
+      const clients = {};
+      for (const row of rows) clients[row.client_id] = row.data;
+      return { clients };
+    } catch (e) {
+      console.error('readSettings DB error:', e.message);
+      return { clients: {} };
+    }
+  }
   try { return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); }
   catch { return { clients: {} }; }
 }
 
-function writeSettings(data) {
+async function writeSettings(data) {
+  if (authDb) {
+    await settingsTableReady;
+    try {
+      const entries = Object.entries(data.clients || {});
+      for (const [clientId, cfg] of entries) {
+        await authDb.query(
+          `INSERT INTO rapportage_client_settings (client_id, data, updated_at)
+           VALUES ($1, $2::jsonb, now())
+           ON CONFLICT (client_id) DO UPDATE SET data = $2::jsonb, updated_at = now()`,
+          [clientId, JSON.stringify(cfg)]
+        );
+      }
+    } catch (e) {
+      console.error('writeSettings DB error:', e.message);
+    }
+    return;
+  }
   try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2)); }
   catch (e) { console.error('writeSettings error:', e.message); }
 }
@@ -43,13 +94,6 @@ function writeSettings(data) {
 function hashPassword(pw) {
   return crypto.createHash('sha256').update(pw + ':woeler-rapportage').digest('hex');
 }
-
-// ─── Auth DB (read-only, shares Google Ads tool user table) ──────────────────
-const authDb = process.env.DATABASE_URL ? new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-  max: 2,
-}) : null;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(express.json());
@@ -142,8 +186,8 @@ app.get('/', requireAuth, (req, res) => {
 });
 
 // ─── API: get settings (passwords masked) ─────────────────────────────────────
-app.get('/api/settings', requireAuth, (req, res) => {
-  const settings = readSettings();
+app.get('/api/settings', requireAuth, async (req, res) => {
+  const settings = await readSettings();
   const safe = { clients: {} };
   for (const [id, cfg] of Object.entries(settings.clients || {})) {
     safe.clients[id] = { ...cfg, password: cfg.password ? '••••••••' : '' };
@@ -152,9 +196,9 @@ app.get('/api/settings', requireAuth, (req, res) => {
 });
 
 // ─── API: save settings ───────────────────────────────────────────────────────
-app.post('/api/settings', requireAuth, (req, res) => {
+app.post('/api/settings', requireAuth, async (req, res) => {
   const incoming = req.body;
-  const current  = readSettings();
+  const current  = await readSettings();
 
   for (const [id, cfg] of Object.entries(incoming.clients || {})) {
     const existing = current.clients[id] || {};
@@ -173,15 +217,15 @@ app.post('/api/settings', requireAuth, (req, res) => {
     current.clients[id] = entry;
   }
 
-  writeSettings(current);
+  await writeSettings(current);
   res.json({ ok: true });
 });
 
 // ─── API: authenticate a client link (public) ─────────────────────────────────
-app.post('/api/auth/:clientId', (req, res) => {
+app.post('/api/auth/:clientId', async (req, res) => {
   const { clientId }  = req.params;
   const { password }  = req.body;
-  const settings      = readSettings();
+  const settings      = await readSettings();
   const cfg           = settings.clients[clientId];
 
   if (!cfg?.password) return res.json({ valid: true });
@@ -189,9 +233,9 @@ app.post('/api/auth/:clientId', (req, res) => {
 });
 
 // ─── API: client config (public — used by /r/:clientId pages) ─────────────────
-app.get('/api/client-config/:clientId', (req, res) => {
+app.get('/api/client-config/:clientId', async (req, res) => {
   const { clientId } = req.params;
-  const cfg          = readSettings().clients[clientId] || {};
+  const cfg          = (await readSettings()).clients[clientId] || {};
   res.json({
     hasPassword:      !!cfg.password,
     platforms:        cfg.platforms        || null,
@@ -203,15 +247,15 @@ app.get('/api/client-config/:clientId', (req, res) => {
 });
 
 // ─── API: save report layout (marketeer-only — drag-and-drop widget config) ──
-app.post('/api/client-config/:clientId/layout', requireAuth, (req, res) => {
+app.post('/api/client-config/:clientId/layout', requireAuth, async (req, res) => {
   const clientId     = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
   const { reportLayout } = req.body;
   if (!reportLayout || typeof reportLayout !== 'object') {
     return res.status(400).json({ error: 'reportLayout ontbreekt of is ongeldig.' });
   }
-  const current = readSettings();
+  const current = await readSettings();
   current.clients[clientId] = { ...(current.clients[clientId] || {}), reportLayout };
-  writeSettings(current);
+  await writeSettings(current);
   res.json({ ok: true });
 });
 
@@ -238,15 +282,15 @@ app.post('/api/sheets/resolve', requireAuth, async (req, res) => {
 });
 
 // ─── API: save linked sheets for a client (marketer-only) ────────────────────
-app.post('/api/client-config/:clientId/sheets', requireAuth, (req, res) => {
+app.post('/api/client-config/:clientId/sheets', requireAuth, async (req, res) => {
   const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
   const { sheets } = req.body;
   if (!Array.isArray(sheets)) {
     return res.status(400).json({ error: 'sheets moet een array zijn.' });
   }
-  const current = readSettings();
+  const current = await readSettings();
   current.clients[clientId] = { ...(current.clients[clientId] || {}), sheets };
-  writeSettings(current);
+  await writeSettings(current);
   res.json({ ok: true });
 });
 
@@ -257,7 +301,7 @@ const SHEET_CACHE_MS = 3 * 60 * 1000;
 app.get('/api/client-config/:clientId/sheet-data/:linkId', async (req, res) => {
   const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
   const { linkId } = req.params;
-  const cfg  = readSettings().clients[clientId] || {};
+  const cfg  = (await readSettings()).clients[clientId] || {};
   const link = (cfg.sheets || []).find(s => s.id === linkId);
   if (!link) return res.status(404).json({ error: 'Sheet-koppeling niet gevonden.' });
 
@@ -287,7 +331,7 @@ app.post('/api/client-config/:clientId/promotion', requireAuth, async (req, res)
     return res.status(400).json({ error: 'Ongeldig platform.' });
   }
 
-  const current    = readSettings();
+  const current    = await readSettings();
   const cfg        = current.clients[clientId] || {};
   const promotions = { ...(cfg.promotions || {}) };
   const existing   = promotions[platform] || {};
@@ -318,7 +362,7 @@ app.post('/api/client-config/:clientId/promotion', requireAuth, async (req, res)
   }
 
   current.clients[clientId] = { ...cfg, promotions };
-  writeSettings(current);
+  await writeSettings(current);
   res.json({ ok: true, promotion: promotions[platform] });
 });
 
@@ -329,7 +373,7 @@ app.post('/api/client-config/:clientId/promotion/regenerate', requireAuth, async
   if (!PROMO_PLATFORMS.includes(platform)) {
     return res.status(400).json({ error: 'Ongeldig platform.' });
   }
-  const current = readSettings();
+  const current = await readSettings();
   const cfg     = current.clients[clientId] || {};
   if (!cfg.website) {
     return res.status(400).json({ error: 'Vul eerst een website in bij deze klant.' });
@@ -346,7 +390,7 @@ app.post('/api/client-config/:clientId/promotion/regenerate', requireAuth, async
     const promotions = { ...(cfg.promotions || {}) };
     promotions[platform] = { ...content, enabled: true, generatedAt: new Date().toISOString() };
     current.clients[clientId] = { ...cfg, promotions };
-    writeSettings(current);
+    await writeSettings(current);
     res.json({ ok: true, promotion: promotions[platform] });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Kon promotietekst niet genereren.' });
@@ -354,13 +398,13 @@ app.post('/api/client-config/:clientId/promotion/regenerate', requireAuth, async
 });
 
 // ─── API: promotietekst handmatig aanpassen door de marketeer ────────────────
-app.post('/api/client-config/:clientId/promotion/edit', requireAuth, (req, res) => {
+app.post('/api/client-config/:clientId/promotion/edit', requireAuth, async (req, res) => {
   const clientId = req.params.clientId.replace(/[^a-z0-9\-]/gi, '');
   const { platform, headline, subheadline, benefits, cta } = req.body || {};
   if (!PROMO_PLATFORMS.includes(platform)) {
     return res.status(400).json({ error: 'Ongeldig platform.' });
   }
-  const current    = readSettings();
+  const current    = await readSettings();
   const cfg        = current.clients[clientId] || {};
   const promotions = { ...(cfg.promotions || {}) };
   const existing   = promotions[platform] || {};
@@ -372,7 +416,7 @@ app.post('/api/client-config/:clientId/promotion/edit', requireAuth, (req, res) 
     cta:          String(cta || ''),
   };
   current.clients[clientId] = { ...cfg, promotions };
-  writeSettings(current);
+  await writeSettings(current);
   res.json({ ok: true, promotion: promotions[platform] });
 });
 
