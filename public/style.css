@@ -445,7 +445,7 @@ select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-l
 /* ── KPI STRIP ──────────────────────────────── */
 .kpi-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 1px;
   background: var(--border);
   border-radius: var(--radius-md);
@@ -466,7 +466,13 @@ select:focus { border-color: var(--orange); box-shadow: 0 0 0 3px var(--orange-l
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-light);
+  line-height: 1.35;
   margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: calc(1.35em * 2);
 }
 .kpi-value {
   font-size: 22px;
